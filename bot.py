@@ -23,7 +23,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
-OWNERS_STR = os.getenv("OWNERS", "7729056358,8808192812")
+OWNERS_STR = os.getenv("OWNERS", "8612102965,8808192812")
 OWNERS = [int(x.strip()) for x in OWNERS_STR.split(",") if x.strip().isdigit()]
 
 TARGET_MAIL_BOT = "fakemailbot"
