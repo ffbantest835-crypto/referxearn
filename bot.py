@@ -24,7 +24,7 @@ API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
 # HARDCODED OWNER IDS (Yahan apni ID daalein)
-OWNERS = [7729056358, 8808192812]
+OWNERS = [7729056358, 8612102965]
 
 TARGET_MAIL_BOT = "fakemailbot"
 
