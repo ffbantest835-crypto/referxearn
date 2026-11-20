@@ -45,7 +45,11 @@ def f_txt(text): return "".join(FONT_MAP.get(c, c) for c in text)
 def p_style(text): return f"<code>{text}</code>,"
 
 # ================== DATABASE ==================
-DB_PATH = "refer_bot.db"
+# FadeHost me data delete na ho iske liye /data folder ka path use kiya hai
+DB_PATH = "/data/refer_bot.db"
+
+# Make sure /data directory exists
+os.makedirs("/data", exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
