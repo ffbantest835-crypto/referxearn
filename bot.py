@@ -23,8 +23,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
-OWNER_ID = 7977493987
-OWNER_USERNAME = "@Trustedidwalabhai"
+OWNER_ID = 8612102965
+OWNER_USERNAME = "@NEXTXDOREVER"
 TARGET_MAIL_BOT = "fakemailbot"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
